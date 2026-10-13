@@ -50,7 +50,7 @@ namespace Mk2.Viewer
         // ---- UI
         private TreeView _levelTree, _sceneTree;
         private ListBox _packList, _modelList;
-        private TextBox _modelFilter, _sceneFilter, _props, _log;
+        private TextBox _modelFilter, _sceneFilter, _props, _log, _levelInfo;
         private ToolStripStatusLabel _status, _camStatus;
         private ToolStripLabel _speedLabel;
         private TabControl _leftTabs, _rightTabs;
@@ -185,6 +185,11 @@ namespace Mk2.Viewer
             _leftTabs = new TabControl { Dock = DockStyle.Fill };
             _levelTree = new TreeView { Dock = DockStyle.Fill, HideSelection = false };
             _levelTree.NodeMouseDoubleClick += async (s, e) => await LevelTreeActivate(e.Node);
+            _levelTree.AfterSelect += (s, e) =>
+            {
+                var lv = e.Node?.Tag as LevelDef ?? (e.Node?.Tag is ValueTuple<LevelDef, ChunkDef> t ? t.Item1 : null);
+                if (lv != null && (_scene == null || _scene.Def != lv)) { ShowLevelInfo(lv, null); _rightTabs.SelectedIndex = 0; }
+            };
             var levelHint = new Label { Dock = DockStyle.Top, Height = 34, Text = "Double-click a level to load it all, or a chunk to load just that chunk (+ env).", ForeColor = SystemColors.GrayText };
             var levelPage = new TabPage("Levels");
             levelPage.Controls.Add(_levelTree);
@@ -225,6 +230,10 @@ namespace Mk2.Viewer
             _rightTabs = new TabControl { Dock = DockStyle.Fill };
             _props = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, Font = new Font(FontFamily.GenericMonospace, 9f), BackColor = SystemColors.Window };
             _log = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, Font = new Font(FontFamily.GenericMonospace, 9f), BackColor = SystemColors.Window };
+            _levelInfo = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, Font = new Font(FontFamily.GenericMonospace, 9f), BackColor = SystemColors.Window };
+            var levelInfoPage = new TabPage("Level");
+            levelInfoPage.Controls.Add(_levelInfo);
+            _rightTabs.TabPages.Add(levelInfoPage);
             var propPage = new TabPage("Properties");
             propPage.Controls.Add(_props);
             var logPage = new TabPage("Log");
@@ -349,6 +358,8 @@ namespace Mk2.Viewer
                 _allModels = game.AllNames(".mdl").Select(Path.GetFileNameWithoutExtension).Distinct(StringComparer.OrdinalIgnoreCase)
                                  .OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
                 FillModelList();
+                ShowLevelInfo(null, null);
+                _rightTabs.SelectedIndex = 0;
                 SetStatus($"{root}: {_levels.Count} levels, {_packList.Items.Count} chunk packs, {_allModels.Count} models");
                 _leftTabs.SelectedIndex = 0;
             }
@@ -552,6 +563,9 @@ namespace Mk2.Viewer
             Log($"Loaded {scene.Def.Name} in {sw.ElapsedMilliseconds} ms");
             foreach (var w in scene.Warnings.Distinct()) Log("  warning: " + w);
             Select(null, null);
+            ShowLevelInfo(_levels.Contains(scene.Def) ? scene.Def : null, _levels.Contains(scene.Def) ? scene : null);
+            if (!_levels.Contains(scene.Def)) _levelInfo.Text = _props.Text;
+            _rightTabs.SelectedIndex = 0;
         }
 
         // =====================================================================================
@@ -680,6 +694,76 @@ namespace Mk2.Viewer
             Redraw();
         }
 
+        /// <summary>Level overview shown in the "Level" tab: levels.ini entry, chunks and (when loaded) scene stats.</summary>
+        private void ShowLevelInfo(LevelDef lv, LevelScene scene)
+        {
+            var sb = new StringBuilder();
+            if (lv == null)
+            {
+                if (_game != null)
+                {
+                    sb.AppendLine("GAME DATA");
+                    sb.AppendLine(new string('=', 9));
+                    sb.AppendLine("folder   " + _game.Root);
+                    sb.AppendLine($"levels   {_levels.Count}");
+                    sb.AppendLine($"packs    {_packList.Items.Count}");
+                    sb.AppendLine($"models   {_allModels.Count}");
+                    sb.AppendLine();
+                    foreach (var l in _levels)
+                    {
+                        int have = l.Chunks.Count(c => _game.ChunkPack(c.Name) != null);
+                        sb.AppendLine($"{l.Name,-20} {l.Chunks.Count,3} chunks ({have} packs found)  start {l.StartChunk}");
+                    }
+                    sb.AppendLine();
+                    sb.AppendLine("Click a level in the Levels tab to see its details, double-click to load it.");
+                }
+                _levelInfo.Text = sb.ToString().Replace("\n", "\r\n");
+                return;
+            }
+            sb.AppendLine("LEVEL " + lv.Name + (scene != null ? "   (loaded)" : "   (not loaded — double-click to load)"));
+            sb.AppendLine(new string('=', 6 + lv.Name.Length));
+            sb.AppendLine($"start chunk   {lv.StartChunk}");
+            sb.AppendLine($"env chunk     {lv.EnvChunk}");
+            if (lv.FogFar > 0) sb.AppendLine($"fog planes    {lv.FogNear} .. {lv.FogFar}");
+            if (lv.FogColor != null) sb.AppendLine($"fog colour    {string.Join(" ", lv.FogColor)}");
+            sb.AppendLine();
+            sb.AppendLine("levels.ini entry:");
+            if (lv.Node != null) AppendNode(sb, lv.Node, 0, skipChildrenNamed: "chunk");
+            sb.AppendLine();
+            sb.AppendLine($"CHUNKS ({lv.Chunks.Count})");
+            foreach (var c in lv.Chunks)
+            {
+                var pack = _game?.ChunkPack(c.Name);
+                var sc = scene?.Chunks.FirstOrDefault(x => x.Def == c);
+                sb.Append($"  {c.Name}{(c.IsEnvironment ? " [env]" : "")}  pack: {(pack == null ? "MISSING" : Path.GetFileName(pack.SourcePath))}");
+                if (sc != null)
+                {
+                    sb.Append($"  objects: {sc.Objects.Count}  with models: {sc.ObjectModels.Count}");
+                }
+                sb.AppendLine();
+                if (c.EnvDome != null) sb.AppendLine($"      sky dome  {c.EnvDome}");
+                if (c.Overlays.Count > 0) sb.AppendLine($"      overlays  {string.Join(", ", c.Overlays)}");
+                if (c.Grounds.Count > 0) sb.AppendLine($"      ground    {string.Join(", ", c.Grounds)}");
+                if (sc != null && sc.Objects.Count > 0)
+                    sb.AppendLine("      " + string.Join("  ", sc.Objects.GroupBy(o => o.Category).OrderBy(g => g.Key).Select(g => $"{g.Key}:{g.Count()}")));
+                foreach (var extra in c.Node.Children.Where(k => k.Key != null && !new[] { "overlay", "ground", "envdome" }.Contains(k.Key.ToLowerInvariant())))
+                    sb.AppendLine($"      {extra}");
+            }
+            if (scene != null)
+            {
+                int tris = _renderer.Items.Sum(i => i.Model.Parts.Sum(p => p.Triangles));
+                sb.AppendLine();
+                sb.AppendLine($"SCENE  {scene.AllObjects.Count()} objects, {_renderer.Items.Count} draw items, {tris:N0} triangles, {_renderer.Collisions.Count} collision meshes");
+                var warns = scene.Warnings.Distinct().ToList();
+                if (warns.Count > 0)
+                {
+                    sb.AppendLine($"WARNINGS ({warns.Count})");
+                    foreach (var w in warns.Take(80)) sb.AppendLine("  " + w);
+                }
+            }
+            _levelInfo.Text = sb.ToString().Replace("\n", "\r\n");
+        }
+
         private void ShowProperties(LevelObject o, DrawItem item)
         {
             var sb = new StringBuilder();
@@ -695,8 +779,10 @@ namespace Mk2.Viewer
                         sb.AppendLine($"{ch.Def.Name,-24} {ch.Overlays.Count,3} overlays  {ch.Objects.Count,5} objects  {ch.Grounds.Count,3} grounds  pack: {(ch.Pack == null ? "-" : Path.GetFileName(ch.Pack.SourcePath))}");
                 }
                 _props.Text = sb.ToString().Replace("\n", "\r\n");
+                if (_rightTabs.SelectedIndex == 1) _rightTabs.SelectedIndex = 0;
                 return;
             }
+            if (_rightTabs.SelectedIndex == 0) _rightTabs.SelectedIndex = 1;
             if (o != null)
             {
                 sb.AppendLine(o.DisplayName);
