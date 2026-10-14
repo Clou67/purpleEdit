@@ -72,7 +72,7 @@ namespace Mk2.Viewer
 
         public MainForm(string[] args)
         {
-            Text = "purpleEdit v1.00";
+            Text = "purpleEdit v1.01";
             Width = 1600; Height = 950;
             StartPosition = FormStartPosition.CenterScreen;
             KeyPreview = false;
