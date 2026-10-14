@@ -9,6 +9,7 @@ namespace Mk2.Formats
         public Vector3 Normal;
         public Vector2 UV;
         public Vector4 Color = Vector4.One;   // 0..1, PS2 colours are scaled so 0x80 = 1.0
+        /// <summary>Skeleton bone indices (already remapped through the mesh's anim node list).</summary>
         public byte Bone0, Bone1;
         public float Weight0 = 1f;
     }
@@ -52,7 +53,9 @@ namespace Mk2.Formats
         public Vector3 BoundsMin;
         public float Radius;
         public Vector3 BoundsSize;
-        public int BoneCount;
+        public int BoneCount;          // u8 at +0x38 (?)
+        /// <summary>Bone that moves this whole component when its meshes aren't skinned (u16 at +0x3A, -1 = none).</summary>
+        public int RigidBone = -1;
         public List<ModelMesh> Meshes = new();
 
         /// <summary>Krome convention: c_ = collision proxy, f_ = shatter fragment.</summary>
@@ -79,9 +82,9 @@ namespace Mk2.Formats
     ///   0x54 u32 materialNameTable (u32 string offsets)
     ///   0x58 u32 refPointTable (u32 offsets to 0x70-byte ref points: vec4 pos, u32 name, ...)
     ///   0x5C u32 animNodeTable (vec4 bind position per node)
-    ///   0x64 u32 animNodeLists (128-byte bone remap tables)
+    ///   0x64 u32 animNodeLists (128-byte bone remap tables: u8 count, then count bone indices)
     ///   0x68 u32 meshLookupTable [material][component] -> MDG offset of first mesh (0 = none)
-    /// Component: vec4 boundsMin, vec4 boundsSize, ..., 0x30 u32 name, 0x34 u32 extra, 0x38 u16 boneCount
+    /// Component: vec4 boundsMin, vec4 boundsSize, ..., 0x30 u32 name, 0x34 u32 extra, 0x38 u8 ?, 0x3A u16 rigid bone (0xFFFF = none)
     ///
     /// MDG3 mesh header (0x10): u16 ?, u16 ?, u16 ?, u16 stripCount, u16 animNodeList, u16 ?, u32 nextMesh
     /// followed by a PS2 DMA chain of VIF packets. Each strip is:
@@ -143,7 +146,8 @@ namespace Mk2.Formats
                     BoundsSize = new Vector3(b.F32(o + 16), b.F32(o + 20), b.F32(o + 24)),
                     Name = b.CStr(b.S32(o + 0x30)),
                     Extra = b.CStr(b.S32(o + 0x34)),
-                    BoneCount = b.U16(o + 0x38),
+                    BoneCount = b.U8(o + 0x38),
+                    RigidBone = b.U16(o + 0x3A) == 0xFFFF ? -1 : b.U16(o + 0x3A),
                 });
             }
 
@@ -189,6 +193,7 @@ namespace Mk2.Formats
                             m.Warnings.Add($"mesh @0x{off:X}: {ex.Message}");
                             break;
                         }
+                        RemapBones(m, mesh);
                         m.Meshes.Add(mesh);
                         m.Components[c].Meshes.Add(mesh);
                         off = next;
@@ -196,6 +201,29 @@ namespace Mk2.Formats
                 }
             }
             return m;
+        }
+
+        /// <summary>
+        /// Skinned vertices store a node index into the mesh's anim node list. Each list is 0x80 bytes:
+        /// u8 count, then count bone indices. Converts Bone0/Bone1 into skeleton bone indices.
+        /// </summary>
+        private static void RemapBones(Model m, ModelMesh mesh)
+        {
+            if (!mesh.Skinned || mesh.AnimNodeList == 0xFFFF) return;
+            if (mesh.AnimNodeList >= m.AnimNodeLists.Count)
+            {
+                m.Warnings.Add($"mesh @0x{mesh.MdgOffset:X}: anim node list {mesh.AnimNodeList} out of range");
+                return;
+            }
+            var list = m.AnimNodeLists[mesh.AnimNodeList];
+            int n = list.Length > 0 ? Math.Min(list[0], list.Length - 1) : 0;
+            byte Map(byte node) => node < n ? list[node + 1] : (byte)0;
+            foreach (var s in mesh.Strips)
+                foreach (var v in s.Vertices)
+                {
+                    v.Bone0 = Map(v.Bone0);
+                    v.Bone1 = Map(v.Bone1);
+                }
         }
 
         private static int ReadMesh(Bin g, int off, ModelMesh mesh)
