@@ -42,7 +42,6 @@ namespace Mk2.Viewer
         private readonly HashSet<Keys> _keys = new HashSet<Keys>();
         private Point _lastMouse, _downMouse;
         private bool _rmb, _mmb, _lmb;
-        private readonly Timer _timer = new Timer { Interval = 15 };
         private readonly Stopwatch _clock = Stopwatch.StartNew();
         private double _lastTick;
         private bool _animate;
@@ -51,6 +50,14 @@ namespace Mk2.Viewer
         private TreeView _levelTree, _sceneTree;
         private ListBox _packList, _modelList;
         private TextBox _modelFilter, _sceneFilter, _props, _log, _levelInfo;
+        private ListBox _refList;
+        private MenuStrip _menu;
+        private ToolStrip _tools;
+        private StatusStrip _statusStrip;
+        private SplitContainer _mainSplit, _rightSplit;
+        private bool _fullscreen;
+        private FormWindowState _prevState;
+        private FormBorderStyle _prevBorder;
         private ToolStripStatusLabel _status, _camStatus;
         private ToolStripLabel _speedLabel;
         private TabControl _leftTabs, _rightTabs;
@@ -68,8 +75,7 @@ namespace Mk2.Viewer
             KeyPreview = false;
             BuildUi();
             Theme.Apply(this, LoadSetting("dark") == "1");
-            _timer.Tick += (s, e) => Tick();
-            _timer.Start();
+            Application.Idle += OnIdle;
             Shown += async (s, e) =>
             {
                 string root = args.Length > 0 ? args[0] : LoadSetting("root");
@@ -84,7 +90,7 @@ namespace Mk2.Viewer
 
         private void BuildUi()
         {
-            var menu = new MenuStrip();
+            var menu = _menu = new MenuStrip();
             var file = new ToolStripMenuItem("&File");
             file.DropDownItems.Add("&Open game folder…", null, async (s, e) => await BrowseGameFolder());
             file.DropDownItems.Add(new ToolStripSeparator());
@@ -139,6 +145,7 @@ namespace Mk2.Viewer
             view.DropDownItems.Add(new ToolStripSeparator());
             view.DropDownItems.Add("Frame whole scene", null, (s, e) => { FrameWorld(_renderer.SceneMin, _renderer.SceneMax); Redraw(); });
             view.DropDownItems.Add("Focus selection (F)", null, (s, e) => FocusSelection());
+            view.DropDownItems.Add(new ToolStripMenuItem("Fullscreen viewport", null, (s, e) => ToggleFullscreen()) { ShortcutKeys = Keys.F11 });
             view.DropDownItems.Add("Background colour…", null, (s, e) => PickBackground());
             view.DropDownItems.Add(new ToolStripSeparator());
             view.DropDownItems.Add(Toggle("Dark mode (UI)", () => Theme.Dark, v => { Theme.Apply(this, v); SaveSetting("dark", v ? "1" : "0"); }));
@@ -150,7 +157,7 @@ namespace Mk2.Viewer
                 "See FORMATS.md next to the solution for everything decoded so far:\nRKV2/BPK, BNI, MDL3/MDG3 (PS2 VIF), TEX, MIN, CGR, levels.ini and .lc3 layouts.", "Formats"));
             menu.Items.Add(help);
 
-            var tools = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
+            var tools = _tools = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
             tools.Items.Add(ToolToggle("Geometry", () => _vs.Overlays, v => _vs.Overlays = v));
             tools.Items.Add(ToolToggle("Objects", () => _vs.Objects, v => _vs.Objects = v));
             tools.Items.Add(ToolToggle("Shapes", () => _vs.Shapes, v => _vs.Shapes = v));
@@ -175,7 +182,7 @@ namespace Mk2.Viewer
             _speedLabel = new ToolStripLabel("Speed: 3000");
             tools.Items.Add(_speedLabel);
 
-            var status = new StatusStrip();
+            var status = _statusStrip = new StatusStrip();
             _status = new ToolStripStatusLabel("Ready") { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
             _camStatus = new ToolStripStatusLabel("");
             status.Items.Add(_status);
@@ -235,7 +242,24 @@ namespace Mk2.Viewer
             levelInfoPage.Controls.Add(_levelInfo);
             _rightTabs.TabPages.Add(levelInfoPage);
             var propPage = new TabPage("Properties");
+            _refList = new ListBox
+            {
+                Dock = DockStyle.Fill, IntegralHeight = false, DrawMode = DrawMode.OwnerDrawFixed,
+                ItemHeight = 18, Cursor = Cursors.Hand, HorizontalScrollbar = true, HorizontalExtent = 2400,
+            };
+            _refList.DrawItem += DrawLinkItem;
+            _refList.MouseClick += (s, e) =>
+            {
+                int i = _refList.IndexFromPoint(e.Location);
+                if (i >= 0 && _refList.Items[i] is RefLink l) FollowLink(l);
+            };
+            var linkPanel = new Panel { Dock = DockStyle.Bottom, Height = 210 };
+            var linkHeader = new Label { Dock = DockStyle.Top, Height = 18, Text = "Links — click to jump to an object" };
+            linkPanel.Controls.Add(_refList);
+            linkPanel.Controls.Add(linkHeader);
             propPage.Controls.Add(_props);
+            propPage.Controls.Add(new Splitter { Dock = DockStyle.Bottom, Height = 5 });
+            propPage.Controls.Add(linkPanel);
             var logPage = new TabPage("Log");
             logPage.Controls.Add(_log);
             _rightTabs.TabPages.Add(propPage);
@@ -251,7 +275,13 @@ namespace Mk2.Viewer
                 DepthBits = 24,
             })
             { Dock = DockStyle.Fill };
-            _gl.Load += (s, e) => { _gl.MakeCurrent(); _renderer.InitGl(); _glReady = true; };
+            _gl.Load += (s, e) =>
+            {
+                _gl.MakeCurrent();
+                try { if (_gl.Context != null) { _gl.Context.SwapInterval = 1; _vsync = true; } } catch { _vsync = false; }
+                _renderer.InitGl();
+                _glReady = true;
+            };
             _gl.Paint += (s, e) => RenderFrame();
             _gl.Resize += (s, e) => Redraw();
             _gl.MouseDown += GlMouseDown;
@@ -262,11 +292,11 @@ namespace Mk2.Viewer
             _gl.KeyUp += (s, e) => _keys.Remove(e.KeyCode);
             _gl.LostFocus += (s, e) => _keys.Clear();
 
-            var right = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, FixedPanel = FixedPanel.Panel2 };
+            var right = _rightSplit = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, FixedPanel = FixedPanel.Panel2 };
             right.Panel1.Controls.Add(_gl);
             right.Panel2.Controls.Add(_rightTabs);
 
-            var main = new SplitContainer { Dock = DockStyle.Fill, FixedPanel = FixedPanel.Panel1 };
+            var main = _mainSplit = new SplitContainer { Dock = DockStyle.Fill, FixedPanel = FixedPanel.Panel1 };
             main.Panel1.Controls.Add(_leftTabs);
             main.Panel2.Controls.Add(right);
 
@@ -554,7 +584,7 @@ namespace Mk2.Viewer
             _scene = scene;
             if (_glReady) _gl.MakeCurrent();
             _renderer.Load(scene);
-            _vs.HiddenChunks.Clear();
+            _vs.ClearSceneVisibility();
             BuildSceneTree();
             _leftTabs.SelectedIndex = 1;
             int tris = _renderer.Items.Sum(i => i.Model.Parts.Sum(p => p.Triangles));
@@ -572,6 +602,15 @@ namespace Mk2.Viewer
         // Scene tree
         // =====================================================================================
 
+        /// <summary>Tag for Scene-tree nodes that belong to one chunk (groups, overlays, grounds, categories).</summary>
+        private sealed class TreeTag
+        {
+            public string Chunk;
+            public string Kind;      // "group", "overlay", "ground", "cat"
+            public string Key;       // group key ("overlays", "objects", "grounds", "dome", "cat:X") or item name
+            public object Payload;   // OverlayRef, Collision, ObjectCategory
+        }
+
         private void BuildSceneTree()
         {
             if (_scene == null) return;
@@ -581,35 +620,54 @@ namespace Mk2.Viewer
             _sceneTree.Nodes.Clear();
             foreach (var ch in _scene.Chunks)
             {
-                var cn = new TreeNode(ch.Def.Name + (ch.Def.IsEnvironment ? "  [env]" : "")) { Tag = ch, Checked = !_vs.HiddenChunks.Contains(ch.Def.Name) };
+                string cname = ch.Def.Name;
+                TreeNode Group(string text, string key) => new TreeNode(text)
+                {
+                    Tag = new TreeTag { Chunk = cname, Kind = "group", Key = key },
+                    Checked = !_vs.GroupHidden(cname, key),
+                };
+                var cn = new TreeNode(cname + (ch.Def.IsEnvironment ? "  [env]" : "")) { Tag = ch, Checked = !_vs.HiddenChunks.Contains(cname) };
                 if (f.Length == 0)
                 {
                     if (ch.Overlays.Count > 0)
                     {
-                        var on = new TreeNode($"Overlays ({ch.Overlays.Count})") { Checked = true, Tag = "overlays" };
+                        var on = Group($"Overlays ({ch.Overlays.Count})", "overlays");
                         foreach (var (ov, m) in ch.Overlays)
-                            on.Nodes.Add(new TreeNode(m == null ? ov.Name + " (missing)" : $"{ov}  — {m.Model.TriangleCount:N0} tris") { Tag = ov, Checked = true });
+                            on.Nodes.Add(new TreeNode(m == null ? ov.Name + " (missing)" : $"{ov}  — {m.Model.TriangleCount:N0} tris")
+                            {
+                                Tag = new TreeTag { Chunk = cname, Kind = "overlay", Key = ov.Name, Payload = ov },
+                                Checked = !_vs.HiddenItems.Contains((cname, ov.Name)),
+                            });
                         cn.Nodes.Add(on);
                     }
                     if (ch.Grounds.Count > 0)
                     {
-                        var gn = new TreeNode($"Ground collision ({ch.Grounds.Count})") { Checked = true, Tag = "grounds" };
-                        foreach (var (n, c) in ch.Grounds) gn.Nodes.Add(new TreeNode($"{n}  — {c.Triangles.Count} tris [{string.Join(", ", c.Materials)}]") { Tag = c, Checked = true });
+                        var gn = Group($"Ground collision ({ch.Grounds.Count})", "grounds");
+                        foreach (var (n, c) in ch.Grounds)
+                            gn.Nodes.Add(new TreeNode($"{n}  — {c.Triangles.Count} tris [{string.Join(", ", c.Materials)}]")
+                            {
+                                Tag = new TreeTag { Chunk = cname, Kind = "ground", Key = n, Payload = c },
+                                Checked = !_vs.HiddenItems.Contains((cname, n)),
+                            });
                         cn.Nodes.Add(gn);
                     }
-                    if (ch.EnvDome != null) cn.Nodes.Add(new TreeNode("Sky dome: " + ch.EnvDome.Name) { Checked = true, Tag = "dome" });
+                    if (ch.EnvDome != null) cn.Nodes.Add(Group("Sky dome: " + ch.EnvDome.Name, "dome"));
                 }
                 var objs = ch.Objects.Where(o => Matches(o, f)).ToList();
                 if (objs.Count > 0)
                 {
-                    var objNode = new TreeNode($"Objects ({objs.Count})") { Checked = true, Tag = "objects" };
+                    var objNode = Group($"Objects ({objs.Count})", "objects");
                     foreach (var grp in objs.GroupBy(o => o.Category).OrderBy(g => g.Key))
                     {
-                        var gnode = new TreeNode($"{grp.Key} ({grp.Count()})") { Tag = grp.Key, Checked = _vs.CategoryVisible(grp.Key) };
+                        var gnode = new TreeNode($"{grp.Key} ({grp.Count()})")
+                        {
+                            Tag = new TreeTag { Chunk = cname, Kind = "cat", Key = grp.Key.ToString(), Payload = grp.Key },
+                            Checked = !_vs.HiddenChunkCategories.Contains((cname, grp.Key)),
+                        };
                         foreach (var o in grp)
                         {
                             string model = ch.ObjectModels.TryGetValue(o, out var lm) ? "  → " + lm.Name : "";
-                            gnode.Nodes.Add(new TreeNode($"{o.DisplayName}{model}") { Tag = o, Checked = true });
+                            gnode.Nodes.Add(new TreeNode($"{o.DisplayName}{model}") { Tag = o, Checked = !_vs.HiddenObjects.Contains(o) });
                         }
                         objNode.Nodes.Add(gnode);
                     }
@@ -634,28 +692,30 @@ namespace Mk2.Viewer
         {
             if (_suppressTreeCheck || e.Action == TreeViewAction.Unknown) return;
             var n = e.Node;
-            if (n.Tag is SceneChunk ch)
+            bool on = n.Checked;
+            void Toggle<T>(HashSet<T> set, T key) { if (on) set.Remove(key); else set.Add(key); }
+            bool linesDirty = false;
+            switch (n.Tag)
             {
-                if (n.Checked) _vs.HiddenChunks.Remove(ch.Def.Name); else _vs.HiddenChunks.Add(ch.Def.Name);
+                case SceneChunk ch:
+                    Toggle(_vs.HiddenChunks, ch.Def.Name);
+                    break;
+                case TreeTag t when t.Kind == "group":
+                    // Only this chunk's group — other chunks are unaffected.
+                    Toggle(_vs.HiddenGroups, (t.Chunk, t.Key));
+                    break;
+                case TreeTag t when t.Kind == "cat":
+                    Toggle(_vs.HiddenChunkCategories, (t.Chunk, (ObjectCategory)t.Payload));
+                    break;
+                case TreeTag t when t.Kind == "overlay" || t.Kind == "ground":
+                    Toggle(_vs.HiddenItems, (t.Chunk, t.Key));
+                    break;
+                case LevelObject o:
+                    if (on) _vs.HiddenObjects.Remove(o); else _vs.HiddenObjects.Add(o);
+                    linesDirty = true;
+                    break;
             }
-            else if (n.Tag is ObjectCategory cat)
-            {
-                if (n.Checked) _vs.HiddenCategories.Remove(cat); else _vs.HiddenCategories.Add(cat);
-                // keep all chunk category nodes in sync
-                _suppressTreeCheck = true;
-                foreach (TreeNode c in _sceneTree.Nodes)
-                    foreach (TreeNode sub in c.Nodes)
-                        foreach (TreeNode g in sub.Nodes)
-                            if (g.Tag is ObjectCategory gc && gc == cat) g.Checked = n.Checked;
-                _suppressTreeCheck = false;
-            }
-            else if (n.Tag is string kind)
-            {
-                if (kind == "overlays") _vs.Overlays = n.Checked;
-                else if (kind == "objects") _vs.Objects = n.Checked;
-                else if (kind == "grounds") _vs.GroundCollision = n.Checked;
-                else if (kind == "dome") _vs.EnvDome = n.Checked;
-            }
+            if (linesDirty && _glReady) { _gl.MakeCurrent(); _renderer.RebuildLines(_vs); }
             Redraw();
         }
 
@@ -666,16 +726,16 @@ namespace Mk2.Viewer
                 Select(o, null);
                 if (focus) FocusSelection();
             }
-            else if (n?.Tag is OverlayRef ov)
+            else if (n?.Tag is TreeTag tt && tt.Payload is OverlayRef ov)
             {
-                var it = _renderer.Items.FirstOrDefault(i => i.Kind == ItemKind.Overlay && i.Name == ov.Name);
+                var it = _renderer.Items.FirstOrDefault(i => i.Kind == ItemKind.Overlay && i.Name == ov.Name && i.Chunk.Def.Name == tt.Chunk);
                 if (it != null)
                 {
                     Select(null, it);
                     if (focus) { FrameWorld(it.WorldMin, it.WorldMax); UpdateSpeedLabel(); Redraw(); }
                 }
             }
-            else if (n?.Tag is Collision c)
+            else if (n?.Tag is TreeTag tg && tg.Payload is Collision c)
             {
                 ShowCollisionInfo(c);
                 if (focus) { FrameWorld(c.BoundsMin, c.BoundsMax); UpdateSpeedLabel(); Redraw(); }
@@ -780,6 +840,7 @@ namespace Mk2.Viewer
                 }
                 _props.Text = sb.ToString().Replace("\n", "\r\n");
                 if (_rightTabs.SelectedIndex == 1) _rightTabs.SelectedIndex = 0;
+                FillLinks(null);
                 return;
             }
             if (_rightTabs.SelectedIndex == 0) _rightTabs.SelectedIndex = 1;
@@ -838,39 +899,112 @@ namespace Mk2.Viewer
                     sb.AppendLine("SCRIPTS");
                     foreach (var s in scripts) sb.AppendLine("  " + s);
                 }
-                if (_scene != null && o.Id != 0)
-                {
-                    var refs = FindReferences(o).ToList();
-                    if (refs.Count > 0)
-                    {
-                        sb.AppendLine();
-                        sb.AppendLine($"REFERENCED BY ({refs.Count})");
-                        foreach (var r in refs.Take(60)) sb.AppendLine("  " + r);
-                    }
-                }
             }
             _props.Text = sb.ToString().Replace("\r\n", "\n").Replace("\n", "\r\n");
+            FillLinks(o);
         }
 
-        private IEnumerable<string> FindReferences(LevelObject target)
+        private sealed class RefLink
+        {
+            public LevelObject Target;
+            public string Text;
+            public bool Header;
+            public override string ToString() => Text;
+        }
+
+        private static readonly char[] ScriptSeparators = { ' ', '(', ')', ';', ',', '\t' };
+
+        private static IEnumerable<string> Tokens(BniNode line)
+        {
+            if (line.Key != null && line.Key.Equals("ScriptCommand", StringComparison.OrdinalIgnoreCase))
+                return line.JoinedValues.Split(ScriptSeparators, StringSplitOptions.RemoveEmptyEntries);
+            return line.Values;
+        }
+
+        private static bool IsPositional(BniNode line) =>
+            line.Key != null && (line.Key.Equals("pos", StringComparison.OrdinalIgnoreCase) || line.Key.Equals("rot", StringComparison.OrdinalIgnoreCase)
+                                 || line.Key.Equals("scale", StringComparison.OrdinalIgnoreCase) || line.Key.Equals("color", StringComparison.OrdinalIgnoreCase)
+                                 || line.Key.Equals("waypoint", StringComparison.OrdinalIgnoreCase) || line.Key.Equals("ID", StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>Objects whose fields or scripts mention the target's ID number.</summary>
+        private IEnumerable<(LevelObject obj, BniNode line)> FindReferences(LevelObject target)
         {
             string id = target.Id.ToString();
             foreach (var o in _scene.AllObjects)
             {
                 if (o == target) continue;
                 foreach (var f in o.Section.Fields)
-                {
                     foreach (var line in Flatten(f))
-                    {
-                        var parts = line.Values;
-                        bool hit = parts.Any(p => p == id) && (line.Key == null || !line.Key.Equals("pos", StringComparison.OrdinalIgnoreCase));
-                        if (!hit && line.Key != null && line.Key.Equals("ScriptCommand", StringComparison.OrdinalIgnoreCase))
-                            hit = (" " + line.JoinedValues.Replace("(", " ").Replace(")", " ").Replace(";", " ") + " ").Contains(" " + id + " ");
-                        if (hit) { yield return $"{o.DisplayName} ({o.ChunkName}) · {line}"; goto next; }
-                    }
-                }
+                        if (!IsPositional(line) && Tokens(line).Any(t => t == id))
+                        {
+                            yield return (o, line);
+                            goto next;
+                        }
             next:;
             }
+        }
+
+        /// <summary>Objects this object points at (ID numbers in its fields and ScriptCommands).</summary>
+        private IEnumerable<(LevelObject obj, BniNode line)> FindOutgoing(LevelObject src)
+        {
+            var byId = _scene.AllObjects.Where(x => x.Id != 0).GroupBy(x => x.Id).ToDictionary(g => g.Key, g => g.ToList());
+            var seen = new HashSet<LevelObject>();
+            foreach (var f in src.Section.Fields)
+                foreach (var line in Flatten(f))
+                {
+                    if (IsPositional(line)) continue;
+                    foreach (var t in Tokens(line))
+                        if (int.TryParse(t, out int id) && id > 0 && byId.TryGetValue(id, out var targets))
+                            foreach (var tgt in targets)
+                                if (tgt != src && seen.Add(tgt)) yield return (tgt, line);
+                }
+        }
+
+        private void FillLinks(LevelObject o)
+        {
+            _refList.BeginUpdate();
+            _refList.Items.Clear();
+            if (o != null && _scene != null && o.Section != null)
+            {
+                var outgoing = FindOutgoing(o).ToList();
+                if (outgoing.Count > 0)
+                {
+                    _refList.Items.Add(new RefLink { Header = true, Text = $"REFERENCES ({outgoing.Count})" });
+                    foreach (var (t, line) in outgoing) _refList.Items.Add(new RefLink { Target = t, Text = $"→ {t.DisplayName}  ({t.ChunkName})   via {line}" });
+                }
+                if (o.Id != 0)
+                {
+                    var incoming = FindReferences(o).ToList();
+                    if (incoming.Count > 0)
+                    {
+                        _refList.Items.Add(new RefLink { Header = true, Text = $"REFERENCED BY ({incoming.Count})" });
+                        foreach (var (src, line) in incoming) _refList.Items.Add(new RefLink { Target = src, Text = $"← {src.DisplayName}  ({src.ChunkName})   {line}" });
+                    }
+                }
+            }
+            if (_refList.Items.Count == 0) _refList.Items.Add(new RefLink { Header = true, Text = o == null ? "" : "No links to or from this object." });
+            _refList.EndUpdate();
+        }
+
+        private void DrawLinkItem(object sender, DrawItemEventArgs e)
+        {
+            e.DrawBackground();
+            if (e.Index < 0 || e.Index >= _refList.Items.Count) return;
+            var l = (RefLink)_refList.Items[e.Index];
+            var font = l.Header ? new Font(_refList.Font, FontStyle.Bold) : new Font(_refList.Font, FontStyle.Underline);
+            var col = l.Header ? Theme.Fore : (Theme.Dark ? Color.FromArgb(110, 170, 255) : Color.FromArgb(0, 90, 200));
+            if ((e.State & DrawItemState.Selected) != 0 && !l.Header) col = SystemColors.HighlightText;
+            TextRenderer.DrawText(e.Graphics, l.Text, font, e.Bounds, col, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+            font.Dispose();
+        }
+
+        private void FollowLink(RefLink link)
+        {
+            if (link?.Target == null) return;
+            _vs.HiddenObjects.Remove(link.Target);
+            Select(link.Target, null);
+            FocusSelection();
+            SelectTreeNode(link.Target);
         }
 
         private static IEnumerable<BniNode> Flatten(BniNode n)
@@ -954,9 +1088,75 @@ namespace Mk2.Viewer
         // Rendering / input
         // =====================================================================================
 
+        private bool _dirty = true;
+
+        /// <summary>F11: viewport only, borderless, covering the screen. F11 or Esc to return.</summary>
+        private void ToggleFullscreen()
+        {
+            _fullscreen = !_fullscreen;
+            SuspendLayout();
+            if (_fullscreen)
+            {
+                _prevState = WindowState;
+                _prevBorder = FormBorderStyle;
+                _menu.Visible = _tools.Visible = _statusStrip.Visible = false;
+                _mainSplit.Panel1Collapsed = true;
+                _rightSplit.Panel2Collapsed = true;
+                FormBorderStyle = FormBorderStyle.None;
+                if (WindowState == FormWindowState.Maximized) WindowState = FormWindowState.Normal;   // re-maximise to cover the taskbar
+                WindowState = FormWindowState.Maximized;
+            }
+            else
+            {
+                _menu.Visible = _tools.Visible = _statusStrip.Visible = true;
+                _mainSplit.Panel1Collapsed = false;
+                _rightSplit.Panel2Collapsed = false;
+                FormBorderStyle = _prevBorder;
+                WindowState = FormWindowState.Normal;
+                WindowState = _prevState;
+            }
+            ResumeLayout(true);
+            _gl.Focus();
+            Redraw();
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == Keys.F11) { ToggleFullscreen(); return true; }
+            if (keyData == Keys.Escape && _fullscreen) { ToggleFullscreen(); return true; }
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
         private void Redraw()
         {
+            _dirty = true;
             _gl?.Invalidate();
+        }
+
+        // ---- smooth render loop: render continuously from Application.Idle while the camera moves
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct NativeMessage { public IntPtr Handle; public uint Msg; public IntPtr WParam; public IntPtr LParam; public uint Time; public System.Drawing.Point Location; }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern int PeekMessage(out NativeMessage msg, IntPtr hWnd, uint min, uint max, uint remove);
+
+        private static bool AppIdle => PeekMessage(out _, IntPtr.Zero, 0, 0, 0) == 0;
+
+        private bool NeedsContinuous =>
+            _keys.Count > 0 || _rmb || _mmb || _animate || _renderer.SelectedItem != null || _renderer.Selected != null;
+
+        private void OnIdle(object sender, EventArgs e)
+        {
+            while (_glReady && AppIdle)
+            {
+                if (WindowState == FormWindowState.Minimized) return;
+                bool cont = NeedsContinuous;
+                if (!cont && !_dirty) { _lastTick = _clock.Elapsed.TotalSeconds; return; }
+                UpdateMovement();
+                RenderFrame();
+                if (!cont) return;
+                if (!_vsync) System.Threading.Thread.Sleep(1);
+            }
         }
 
         private void RenderFrame()
@@ -975,14 +1175,26 @@ namespace Mk2.Viewer
                 MessageBox.Show(this, ex.Message, "Render error");
             }
             _gl.SwapBuffers();
-            var p = CamWorldPosition;
-            _camStatus.Text = $"cam {p.X:0} {p.Y:0} {p.Z:0}   {_renderer.LastDrawnTriangles:N0} tris";
+            _dirty = false;
+            _frames++;
+            double now = _clock.Elapsed.TotalSeconds;
+            if (now - _statusTime > 0.25)   // updating the status strip every frame causes layout hitches
+            {
+                double fps = _frames / (now - _statusTime);
+                _frames = 0; _statusTime = now;
+                var p = CamWorldPosition;
+                _camStatus.Text = $"cam {p.X:0} {p.Y:0} {p.Z:0}   {_renderer.LastDrawnTriangles:N0} tris   {fps:0} fps";
+            }
         }
 
-        private void Tick()
+        private int _frames;
+        private double _statusTime;
+        private bool _vsync;
+
+        private void UpdateMovement()
         {
             double now = _clock.Elapsed.TotalSeconds;
-            float dt = (float)Math.Min(0.1, now - _lastTick);
+            float dt = (float)Math.Min(0.05, now - _lastTick);
             _lastTick = now;
             if (!_gl.Focused && _keys.Count > 0) _keys.Clear();
             var move = Vec3.Zero;
@@ -998,9 +1210,7 @@ namespace Mk2.Viewer
                 if ((ModifierKeys & Keys.Shift) != 0) speed *= 4;
                 if ((ModifierKeys & Keys.Control) != 0) speed *= 0.25f;
                 _cam.Position += Vec3.Normalize(move) * speed * dt;
-                Redraw();
             }
-            else if ((_animate || _renderer.SelectedItem != null || _renderer.Selected != null) && WindowState != FormWindowState.Minimized) Redraw();
         }
 
         private void GlMouseDown(object sender, MouseEventArgs e)
@@ -1030,13 +1240,13 @@ namespace Mk2.Viewer
             if (_rmb || (_lmb && (ModifierKeys & Keys.Alt) != 0))
             {
                 _cam.Rotate(dx * 0.005f, -dy * 0.005f);
-                Redraw();
+                _dirty = true;
             }
             else if (_mmb)
             {
                 float k = _cam.Speed * 0.002f;
                 _cam.Position += (-_cam.Right * dx + _cam.Up * dy) * k;
-                Redraw();
+                _dirty = true;
             }
         }
 
@@ -1216,7 +1426,7 @@ namespace Mk2.Viewer
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
-            _timer.Stop();
+            Application.Idle -= OnIdle;
             if (_glReady)
             {
                 _gl.MakeCurrent();

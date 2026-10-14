@@ -37,9 +37,11 @@ The game folder can be any folder that contains the extracted files and/or the a
 * **Scene tab**: tick chunks and categories to show or hide them, and filter objects by class, ID name or ID number. Double-click an object to fly to it.
 * **Packs tab**: view everything in one `.BPK`. Level geometry stays in place; props are laid out on a grid.
 * **Models tab**: view any single model.
-* **Properties**: shows the full lc3 entry, decoded transform, class/alias chain, model candidates, materials/textures, and script commands. It also lists "referenced by" (other objects whose fields or scripts mention this object's ID).
+* **Properties**: shows the full lc3 entry, decoded transform, class/alias chain, model candidates, materials/textures, and script commands. Below it, a **Links** list shows the objects this one references and the objects that reference it (by ID in fields or ScriptCommands); click a link to jump to that object.
 * **Overlays** you can turn on or off: textures, prelit vertex colours (brightness ×1–2), lighting, wireframe, fog from levels.ini, ground and prop collision (coloured per collision material), `c_*` collision components and `f_*` fragments inside models, and trigger boxes/spheres/polygons, paths, volumes, cameras, spawns, sounds and logic objects.
 * **Export**: the current scene (visible chunks) to `.glb` with embedded textures and object transforms, the selected model to `.glb`, all scene textures to PNG, decompiled layouts to text, and screenshots.
+
+Press **F11** for a fullscreen viewport (F11 or Esc to return). In the Scene tab every chunk's overlays, objects, categories, ground collision and individual items can be ticked on or off independently.
 
 Controls: right-drag to look, WASD to move, Q/E for down/up, Shift/Ctrl for faster/slower, the mouse wheel sets fly speed, middle-drag pans, left-click selects, F focuses the selection, and Esc deselects.
 

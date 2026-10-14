@@ -8,6 +8,8 @@ namespace Mk2.Viewer.Rendering
     /// <summary>Small helpers around raw GL objects. All math uses System.Numerics (row-vector convention).</summary>
     public static class GlUtil
     {
+        private static readonly float[] _matBuf = new float[16];
+
         /// <summary>
         /// Uploads a System.Numerics matrix. Its row-major memory read as column-major by GLSL
         /// gives the transpose, so shaders compute "M * v" which equals (v * M) on the CPU side.
@@ -15,11 +17,11 @@ namespace Mk2.Viewer.Rendering
         public static void SetMatrix(int location, Matrix4x4 m)
         {
             if (location < 0) return;
-            var a = new float[]
-            {
-                m.M11, m.M12, m.M13, m.M14, m.M21, m.M22, m.M23, m.M24,
-                m.M31, m.M32, m.M33, m.M34, m.M41, m.M42, m.M43, m.M44,
-            };
+            var a = _matBuf;
+            a[0] = m.M11; a[1] = m.M12; a[2] = m.M13; a[3] = m.M14;
+            a[4] = m.M21; a[5] = m.M22; a[6] = m.M23; a[7] = m.M24;
+            a[8] = m.M31; a[9] = m.M32; a[10] = m.M33; a[11] = m.M34;
+            a[12] = m.M41; a[13] = m.M42; a[14] = m.M43; a[15] = m.M44;
             GL.UniformMatrix4(location, 1, false, a);
         }
 
@@ -78,13 +80,34 @@ namespace Mk2.Viewer.Rendering
             return l;
         }
 
-        public void Set(string name, Matrix4x4 m) => GlUtil.SetMatrix(Loc(name), m);
-        public void Set(string name, float v) { int l = Loc(name); if (l >= 0) GL.Uniform1(l, v); }
-        public void Set(string name, int v) { int l = Loc(name); if (l >= 0) GL.Uniform1(l, v); }
+        // Last value uploaded per uniform location; skips redundant GL calls (big win with thousands of draws).
+        private readonly Dictionary<int, Vector4> _cache = new Dictionary<int, Vector4>();
+        private readonly Dictionary<int, Matrix4x4> _matCache = new Dictionary<int, Matrix4x4>();
+
+        private bool Changed(int l, Vector4 v)
+        {
+            if (_cache.TryGetValue(l, out var old) && old == v) return false;
+            _cache[l] = v;
+            return true;
+        }
+
+        /// <summary>Forget cached values (call after the program is re-linked or another program changed state).</summary>
+        public void ResetCache() { _cache.Clear(); _matCache.Clear(); }
+
+        public void Set(string name, Matrix4x4 m)
+        {
+            int l = Loc(name);
+            if (l < 0) return;
+            if (_matCache.TryGetValue(l, out var old) && old == m) return;
+            _matCache[l] = m;
+            GlUtil.SetMatrix(l, m);
+        }
+        public void Set(string name, float v) { int l = Loc(name); if (l >= 0 && Changed(l, new Vector4(v, 0, 0, 0))) GL.Uniform1(l, v); }
+        public void Set(string name, int v) { int l = Loc(name); if (l >= 0 && Changed(l, new Vector4(v, 0, 0, 1))) GL.Uniform1(l, v); }
         public void Set(string name, bool v) => Set(name, v ? 1 : 0);
-        public void Set(string name, Vector2 v) { int l = Loc(name); if (l >= 0) GL.Uniform2(l, v.X, v.Y); }
-        public void Set(string name, Vector3 v) { int l = Loc(name); if (l >= 0) GL.Uniform3(l, v.X, v.Y, v.Z); }
-        public void Set(string name, Vector4 v) { int l = Loc(name); if (l >= 0) GL.Uniform4(l, v.X, v.Y, v.Z, v.W); }
+        public void Set(string name, Vector2 v) { int l = Loc(name); if (l >= 0 && Changed(l, new Vector4(v.X, v.Y, 0, 0))) GL.Uniform2(l, v.X, v.Y); }
+        public void Set(string name, Vector3 v) { int l = Loc(name); if (l >= 0 && Changed(l, new Vector4(v, 0))) GL.Uniform3(l, v.X, v.Y, v.Z); }
+        public void Set(string name, Vector4 v) { int l = Loc(name); if (l >= 0 && Changed(l, v)) GL.Uniform4(l, v.X, v.Y, v.Z, v.W); }
 
         public void Dispose()
         {

@@ -29,6 +29,7 @@ namespace Mk2.Viewer.Rendering
         public LevelObject Object;
         public string Name;
         public int Triangles;
+        public Vector3 WorldMin, WorldMax;
     }
 
     public sealed class PickResult
@@ -184,10 +185,13 @@ namespace Mk2.Viewer.Rendering
                     k++;
                 }
             }
+            var lmin = new Vector3(float.MaxValue); var lmax = new Vector3(float.MinValue);
+            foreach (var p in c.Vertices) { lmin = Vector3.Min(lmin, p); lmax = Vector3.Max(lmax, p); }
+            TransformBounds(lmin, lmax, world, out var wmin, out var wmax);
             Collisions.Add(new CollisionItem
             {
                 Mesh = GpuMesh.Create(data, idx), World = world, Chunk = ch, Object = o,
-                Name = name ?? c.Name, Triangles = c.Triangles.Count,
+                Name = name ?? c.Name, Triangles = c.Triangles.Count, WorldMin = wmin, WorldMax = wmax,
             });
         }
 
@@ -277,9 +281,20 @@ namespace Mk2.Viewer.Rendering
             }
         }
 
-        private void BuildLines(SceneChunk ch)
+        /// <summary>Re-create the debug line batches (after individual objects were hidden/shown).</summary>
+        public void RebuildLines(ViewSettings s)
         {
-            foreach (var grp in ch.Objects.GroupBy(o => o.Category))
+            foreach (var l in _shapeLines.Values) l.Dispose();
+            foreach (var l in _markerLines.Values) l.Dispose();
+            _shapeLines.Clear();
+            _markerLines.Clear();
+            if (Scene == null) return;
+            foreach (var ch in Scene.Chunks) BuildLines(ch, s);
+        }
+
+        private void BuildLines(SceneChunk ch, ViewSettings s = null)
+        {
+            foreach (var grp in ch.Objects.Where(o => s == null || !s.HiddenObjects.Contains(o)).GroupBy(o => o.Category))
             {
                 var col = CategoryColors[grp.Key];
                 var shapes = new List<float>();
@@ -382,12 +397,39 @@ namespace Mk2.Viewer.Rendering
 
         public bool Visible(DrawItem it, ViewSettings s)
         {
-            if (s.HiddenChunks.Contains(it.Chunk.Def.Name)) return false;
+            string ch = it.Chunk.Def.Name;
             switch (it.Kind)
             {
-                case ItemKind.Overlay: return s.Overlays;
-                case ItemKind.EnvDome: return s.EnvDome;
-                case ItemKind.Object: return s.Objects && s.CategoryVisible(it.Object.Category);
+                case ItemKind.Overlay: return s.OverlayVisible(ch, it.Name);
+                case ItemKind.EnvDome: return s.DomeVisible(ch);
+                case ItemKind.Object: return s.ObjectVisible(it.Object);
+            }
+            return !s.HiddenChunks.Contains(ch);
+        }
+
+        // ---- frustum culling (planes extracted from the row-vector view-projection matrix)
+        private readonly Vector4[] _planes = new Vector4[6];
+        private readonly List<DrawItem> _visible = new List<DrawItem>();
+
+        private void ExtractFrustum(Matrix4x4 m)
+        {
+            var c1 = new Vector4(m.M11, m.M21, m.M31, m.M41);
+            var c2 = new Vector4(m.M12, m.M22, m.M32, m.M42);
+            var c3 = new Vector4(m.M13, m.M23, m.M33, m.M43);
+            var c4 = new Vector4(m.M14, m.M24, m.M34, m.M44);
+            _planes[0] = c4 + c1; _planes[1] = c4 - c1;
+            _planes[2] = c4 + c2; _planes[3] = c4 - c2;
+            _planes[4] = c4 + c3; _planes[5] = c4 - c3;
+        }
+
+        private bool InFrustum(Vector3 min, Vector3 max)
+        {
+            for (int i = 0; i < 6; i++)
+            {
+                var p = _planes[i];
+                // farthest corner along the plane normal
+                float x = p.X >= 0 ? max.X : min.X, y = p.Y >= 0 ? max.Y : min.Y, z = p.Z >= 0 ? max.Z : min.Z;
+                if (p.X * x + p.Y * y + p.Z * z + p.W < 0) return false;
             }
             return true;
         }
@@ -431,8 +473,9 @@ namespace Mk2.Viewer.Rendering
                 GL.DepthMask(false);
                 GL.Disable(EnableCap.CullFace);
                 var eye = s.MirrorX ? cam.Position * new Vector3(-1, 1, 1) : cam.Position;
-                foreach (var it in Items.Where(i => i.Kind == ItemKind.EnvDome && !s.HiddenChunks.Contains(i.Chunk.Def.Name)))
+                foreach (var it in Items)
                 {
+                    if (it.Kind != ItemKind.EnvDome || !Visible(it, s)) continue;
                     var c = (it.Model.Min + it.Model.Max) * 0.5f;
                     var w = Matrix4x4.CreateTranslation(eye - new Vector3(c.X, 0, c.Z));
                     DrawModel(it.Model, w, s, time, pass: 0, forceNoFog: true);
@@ -445,21 +488,25 @@ namespace Mk2.Viewer.Rendering
             if (s.CullBackfaces) { GL.Enable(EnableCap.CullFace); GL.CullFace(TriangleFace.Back); }
             else GL.Disable(EnableCap.CullFace);
 
-            // 2. Opaque + alpha-tested geometry.
-            GL.Disable(EnableCap.Blend);
+            // 2. Opaque + alpha-tested geometry (visibility + frustum culled once per frame).
+            ExtractFrustum(viewProj);
+            _visible.Clear();
             foreach (var it in Items)
-                if (it.Kind != ItemKind.EnvDome && Visible(it, s)) DrawModel(it.Model, it.World, s, time, pass: 0);
+                if (it.Kind != ItemKind.EnvDome && Visible(it, s) && InFrustum(it.WorldMin, it.WorldMax)) _visible.Add(it);
+            GL.Disable(EnableCap.Blend);
+            foreach (var it in _visible) DrawModel(it.Model, it.World, s, time, pass: 0);
 
             // 3. Collision.
             if (s.GroundCollision || s.ObjectCollision)
             {
                 bool overlay = s.CollisionOverlay;
+                // Pull collision slightly towards the camera so it wins over the coincident visual mesh.
+                GL.Enable(EnableCap.PolygonOffsetFill);
+                GL.PolygonOffset(-1f, -2f);
                 if (overlay)
                 {
                     GL.Enable(EnableCap.Blend);
                     GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-                    GL.Enable(EnableCap.PolygonOffsetFill);
-                    GL.PolygonOffset(-1f, -2f);
                     GL.DepthMask(false);
                 }
                 _mesh.Set("uUseTex", 0);
@@ -472,9 +519,8 @@ namespace Mk2.Viewer.Rendering
                 _mesh.Set("uBrightness", 1f);
                 foreach (var c in Collisions)
                 {
-                    if (s.HiddenChunks.Contains(c.Chunk.Def.Name)) continue;
-                    if (c.Object == null ? !s.GroundCollision : !s.ObjectCollision) continue;
-                    if (c.Object != null && (!s.Objects || !s.CategoryVisible(c.Object.Category))) continue;
+                    if (c.Object == null ? !s.GroundVisible(c.Chunk.Def.Name, c.Name) : (!s.ObjectCollision || !s.ObjectVisible(c.Object))) continue;
+                    if (!InFrustum(c.WorldMin, c.WorldMax)) continue;
                     _mesh.Set("uModel", c.World);
                     c.Mesh.Draw();
                     LastDrawnTriangles += c.Triangles;
@@ -490,8 +536,7 @@ namespace Mk2.Viewer.Rendering
             {
                 GL.Enable(EnableCap.Blend);
                 GL.DepthMask(false);
-                foreach (var it in Items)
-                    if (it.Kind != ItemKind.EnvDome && Visible(it, s)) DrawModel(it.Model, it.World, s, time, pass: 1);
+                foreach (var it in _visible) DrawModel(it.Model, it.World, s, time, pass: 1);
                 GL.DepthMask(true);
                 GL.Disable(EnableCap.Blend);
             }
@@ -511,10 +556,10 @@ namespace Mk2.Viewer.Rendering
             {
                 if (s.Shapes)
                     foreach (var kv in _shapeLines)
-                        if (!s.HiddenChunks.Contains(kv.Key.chunk) && s.CategoryVisible(kv.Key.cat)) kv.Value.Draw();
+                        if (s.CategoryBatchVisible(kv.Key.chunk, kv.Key.cat)) kv.Value.Draw();
                 if (s.Markers)
                     foreach (var kv in _markerLines)
-                        if (!s.HiddenChunks.Contains(kv.Key.chunk) && s.CategoryVisible(kv.Key.cat)) kv.Value.Draw();
+                        if (s.CategoryBatchVisible(kv.Key.chunk, kv.Key.cat)) kv.Value.Draw();
             }
             if (_selectionFill != null)
             {
@@ -716,7 +761,7 @@ namespace Mk2.Viewer.Rendering
                     if (s.HiddenChunks.Contains(ch.Def.Name)) continue;
                     foreach (var o in ch.Objects)
                     {
-                        if (!s.CategoryVisible(o.Category)) continue;
+                        if (!s.ObjectVisible(o)) continue;
                         if (!ch.ObjectModels.ContainsKey(o) && s.Markers && RaySphere(origin, dir, o.Position, 70, out float t0))
                             Consider(t0, null, o, o.DisplayName);
                         if (!s.Shapes) continue;
