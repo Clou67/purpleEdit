@@ -7,6 +7,8 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>purpleEdit</AssemblyName>
     <RollForward>LatestMajor</RollForward>
+    <Version>1.0.0</Version>
+    <Product>purpleEdit</Product>
     <RootNamespace>Mk2.Viewer</RootNamespace>
     <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
     <ForceDesignerDpiUnaware>true</ForceDesignerDpiUnaware>
