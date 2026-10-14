@@ -31,113 +31,113 @@ namespace Mk2.Formats
         public string SourcePath { get; private set; }
         public bool BigEndian { get; private set; }
         public List<Entry> Entries { get; } = new();
-        private readonly Dictionary<string, Entry> _byName = new(StringComparer.OrdinalIgnoreCase);
-        private byte[] _data;          // when loaded fully in memory
-        private readonly object _lock = new();
+        private readonly Dictionary<string, Entry> byName = new(StringComparer.OrdinalIgnoreCase);
+        private byte[] contents;          // when loaded fully in memory
+        private readonly object readLock = new();
 
         public static bool IsRkv(byte[] head) =>
             head.Length >= 4 && head[0] == 'R' && head[1] == 'K' && head[2] == 'V' && head[3] == '2';
 
         public static RkvArchive Open(string path, bool loadIntoMemory = true)
         {
-            var a = new RkvArchive { SourcePath = path };
+            var archive = new RkvArchive { SourcePath = path };
             if (loadIntoMemory)
             {
-                a._data = File.ReadAllBytes(path);
-                a.ParseDirectory(a._data);
+                archive.contents = File.ReadAllBytes(path);
+                archive.ParseDirectory(archive.contents);
             }
             else
             {
-                using var fs = File.OpenRead(path);
+                using var stream = File.OpenRead(path);
                 var head = new byte[0x80];
-                fs.ReadExactly(head);
-                var tmp = new Bin(head);
-                int count = tmp.S32(4);
-                bool be = count < 0 || count > 1_000_000;
-                tmp = new Bin(head, be);
-                count = tmp.S32(4);
-                int nameSize = tmp.S32(8);
-                int infoOff = tmp.S32(0x14);
+                stream.ReadExactly(head);
+                var header = new Bin(head);
+                int count = header.S32(4);
+                bool bigEndian = count < 0 || count > 1_000_000;
+                header = new Bin(head, bigEndian);
+                count = header.S32(4);
+                int nameSize = header.S32(8);
+                int infoOff = header.S32(0x14);
                 int dirLen = infoOff + count * 0x14 + nameSize;
-                var dir = new byte[dirLen];
-                fs.Position = 0;
-                fs.ReadExactly(dir);
-                a.ParseDirectory(dir);
+                var directory = new byte[dirLen];
+                stream.Position = 0;
+                stream.ReadExactly(directory);
+                archive.ParseDirectory(directory);
             }
-            return a;
+            return archive;
         }
 
         public static RkvArchive FromBytes(byte[] data, string name)
         {
-            var a = new RkvArchive { SourcePath = name, _data = data };
-            a.ParseDirectory(data);
-            return a;
+            var archive = new RkvArchive { SourcePath = name, contents = data };
+            archive.ParseDirectory(data);
+            return archive;
         }
 
-        private void ParseDirectory(byte[] d)
+        private void ParseDirectory(byte[] directory)
         {
-            if (!IsRkv(d)) throw new InvalidDataException("Not an RKV2 archive");
-            var b = new Bin(d);
-            int count = b.S32(4);
+            if (!IsRkv(directory)) throw new InvalidDataException("Not an RKV2 archive");
+            var reader = new Bin(directory);
+            int count = reader.S32(4);
             BigEndian = count < 0 || count > 1_000_000;
-            b = new Bin(d, BigEndian);
-            count = b.S32(4);
-            int infoOff = b.S32(0x14);
+            reader = new Bin(directory, BigEndian);
+            count = reader.S32(4);
+            int infoOff = reader.S32(0x14);
             int nameBase = infoOff + count * 0x14;
-            for (int i = 0; i < count; i++)
+            for (int index = 0; index < count; index++)
             {
-                int o = infoOff + i * 0x14;
-                var e = new Entry
+                int offset = infoOff + index * 0x14;
+                var entry = new Entry
                 {
-                    Name = b.CStr(nameBase + b.S32(o)),
-                    Size = b.S32(o + 8),
-                    Offset = b.S32(o + 12),
-                    Crc = b.U32(o + 16),
+                    Name = reader.CStr(nameBase + reader.S32(offset)),
+                    Size = reader.S32(offset + 8),
+                    Offset = reader.S32(offset + 12),
+                    Crc = reader.U32(offset + 16),
                 };
-                Entries.Add(e);
-                _byName.TryAdd(e.Name, e);
+                Entries.Add(entry);
+                byName.TryAdd(entry.Name, entry);
             }
         }
 
-        public bool Contains(string name) => _byName.ContainsKey(name);
-        public Entry Find(string name) => _byName.TryGetValue(name, out var e) ? e : null;
+        public bool Contains(string name) => byName.ContainsKey(name);
+        public Entry Find(string name) => byName.TryGetValue(name, out var entry) ? entry : null;
 
-        public byte[] Read(Entry e)
+        public byte[] Read(Entry entry)
         {
-            var buf = new byte[e.Size];
-            if (_data != null)
+            var buffer = new byte[entry.Size];
+            if (contents != null)
             {
-                Buffer.BlockCopy(_data, e.Offset, buf, 0, e.Size);
-                return buf;
+                Buffer.BlockCopy(contents, entry.Offset, buffer, 0, entry.Size);
+                return buffer;
             }
-            lock (_lock)
+            lock (readLock)
             {
-                using var fs = File.OpenRead(SourcePath);
-                fs.Position = e.Offset;
-                fs.ReadExactly(buf);
+                using var stream = File.OpenRead(SourcePath);
+                stream.Position = entry.Offset;
+                stream.ReadExactly(buffer);
             }
-            return buf;
+            return buffer;
         }
 
         public byte[] Read(string name)
         {
-            var e = Find(name);
-            return e == null ? null : Read(e);
+            var entry = Find(name);
+            return entry == null ? null : Read(entry);
         }
 
         public void ExtractAll(string outDir, bool groupByExtension = false)
         {
             Directory.CreateDirectory(outDir);
-            foreach (var e in Entries)
+            foreach (var entry in Entries)
             {
-                string dir = outDir;
+                string directory = outDir;
                 if (groupByExtension)
                 {
-                    string ext = Path.GetExtension(e.Name).TrimStart('.').ToUpperInvariant();
-                    if (ext.Length > 0) dir = Path.Combine(outDir, ext);
+                    string extension = Path.GetExtension(entry.Name).TrimStart('.').ToUpperInvariant();
+                    if (extension.Length > 0) directory = Path.Combine(outDir, extension);
                 }
-                Directory.CreateDirectory(dir);
-                File.WriteAllBytes(Path.Combine(dir, e.Name), Read(e));
+                Directory.CreateDirectory(directory);
+                File.WriteAllBytes(Path.Combine(directory, entry.Name), Read(entry));
             }
         }
     }

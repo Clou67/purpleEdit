@@ -59,9 +59,9 @@ namespace Mk2.Formats
     ///   rotation = quaternion (x, y, z, w) ÷ 16384
     ///   position / scale = Decompress_Vector (5-bit exponent per axis packed in w).
     ///
-    /// Pose maths (checked against the game's walk/run cycles): local = S · R · T(localOffset + key.Position)
+    /// Pose maths (checked against the game's walk/run cycles): local = S · R · ReadTransform(localOffset + key.Position)
     /// with row vectors, R = CreateFromQuaternion(conjugate(q)) — the game's matrices are transposed — and
-    /// global = local · parentGlobal. Vertices are stored in bind pose, so skin = T(−BindPosition) · global.
+    /// global = local · parentGlobal. Vertices are stored in bind pose, so skin = ReadTransform(−BindPosition) · global.
     /// </summary>
     public sealed class Animation
     {
@@ -77,128 +77,128 @@ namespace Mk2.Formats
 
         public static Animation Load(byte[] anm, byte[] ang, string name = null)
         {
-            var b = new Bin(anm);
-            if (anm.Length < 0x20 || b.CStr(0, 4) != "ANM3")
+            var reader = new Bin(anm);
+            if (anm.Length < 0x20 || reader.CStr(0, 4) != "ANM3")
             {
                 if (anm.Length >= 4 && anm[0] == '3' && anm[1] == 'M' && anm[2] == 'N' && anm[3] == 'A')
                     throw new NotSupportedException("Big-endian (GameCube) ANM3 is not supported yet");
                 throw new InvalidDataException("Not an ANM3 file");
             }
-            var a = new Animation { Name = name };
-            int boneCount = b.U8(4);
-            a.HeaderByte5 = b.U8(5);
-            a.FrameCount = b.U16(6);
+            var animation = new Animation { Name = name };
+            int boneCount = reader.U8(4);
+            animation.HeaderByte5 = reader.U8(5);
+            animation.FrameCount = reader.U16(6);
 
-            var g = ang != null && ang.Length >= 0x10 ? new Bin(ang) : null;
+            var guts = ang != null && ang.Length >= 0x10 ? new Bin(ang) : null;
             int angData = 0x10, angCount = 0;
-            int info = b.S32(0x14);
+            int info = reader.S32(0x14);
             if (info > 0 && info + 6 <= anm.Length)
             {
-                angData = b.S32(info);
-                angCount = b.U16(info + 4);
+                angData = reader.S32(info);
+                angCount = reader.U16(info + 4);
             }
-            if (g != null)
+            if (guts != null)
             {
                 if (angData <= 0 || angData > ang.Length) angData = 0x10;
                 int fit = (ang.Length - angData) / 8;
                 if (angCount == 0 || angCount > fit) angCount = fit;
             }
-            else a.Warnings.Add("ANG file missing: positions, scales and indexed rotations fall back to the bind pose");
-            a.TransformCount = angCount;
+            else animation.Warnings.Add("ANG file missing: positions, scales and indexed rotations fall back to the bind pose");
+            animation.TransformCount = angCount;
 
-            short[] T(int i)
+            short[] ReadTransform(int index)
             {
-                if (g == null || i < 0 || i >= angCount) return null;
-                int o = angData + i * 8;
-                return new[] { g.S16(o), g.S16(o + 2), g.S16(o + 4), g.S16(o + 6) };
+                if (guts == null || index < 0 || index >= angCount) return null;
+                int offset = angData + index * 8;
+                return new[] { guts.S16(offset), guts.S16(offset + 2), guts.S16(offset + 4), guts.S16(offset + 6) };
             }
-            Quaternion Rot(int i)
+            Quaternion Rot(int index)
             {
-                var s = T(i);
-                if (s == null) return Quaternion.Identity;
-                var q = new Quaternion(s[0] / 16384f, s[1] / 16384f, s[2] / 16384f, s[3] / 16384f);
-                return q.LengthSquared() > 1e-12f ? Quaternion.Normalize(q) : Quaternion.Identity;
+                var transform = ReadTransform(index);
+                if (transform == null) return Quaternion.Identity;
+                var rotation = new Quaternion(transform[0] / 16384f, transform[1] / 16384f, transform[2] / 16384f, transform[3] / 16384f);
+                return rotation.LengthSquared() > 1e-12f ? Quaternion.Normalize(rotation) : Quaternion.Identity;
             }
-            Vector3 Vec(int i, Vector3 fallback)
+            Vector3 Vec(int index, Vector3 fallback)
             {
-                var s = T(i);
-                return s == null ? fallback : DecompressVector(s[0], s[1], s[2], (ushort)s[3]);
+                var transform = ReadTransform(index);
+                return transform == null ? fallback : DecompressVector(transform[0], transform[1], transform[2], (ushort)transform[3]);
             }
 
-            for (int i = 0; i < boneCount; i++)
+            for (int boneIndex = 0; boneIndex < boneCount; boneIndex++)
             {
-                int o = 0x20 + i * 0x20;
-                if (o + 0x20 > anm.Length) { a.Warnings.Add($"bone table truncated at bone {i}"); break; }
+                int offset = 0x20 + boneIndex * 0x20;
+                if (offset + 0x20 > anm.Length) { animation.Warnings.Add($"bone table truncated at bone {boneIndex}"); break; }
                 var bone = new AnimBone
                 {
-                    Index = i,
-                    BindPosition = new Vector3(b.F32(o), b.F32(o + 4), b.F32(o + 8)),
-                    Name = b.CStr(b.S32(o + 0x10)),
-                    KeyType = (AnimKeyType)b.U16(o + 0x1E),
+                    Index = boneIndex,
+                    BindPosition = new Vector3(reader.F32(offset), reader.F32(offset + 4), reader.F32(offset + 8)),
+                    Name = reader.CStr(reader.S32(offset + 0x10)),
+                    KeyType = (AnimKeyType)reader.U16(offset + 0x1E),
                 };
-                int keyCount = b.U16(o + 0x14);
-                int parent = b.U16(o + 0x16);
+                int keyCount = reader.U16(offset + 0x14);
+                int parent = reader.U16(offset + 0x16);
                 bone.Parent = parent == 0xFF || parent == 0xFFFF || parent >= boneCount ? -1 : parent;
-                int keyOff = b.S32(o + 0x18);
-                if (string.IsNullOrEmpty(bone.Name)) bone.Name = "bone" + i;
+                int keyOff = reader.S32(offset + 0x18);
+                if (string.IsNullOrEmpty(bone.Name)) bone.Name = "bone" + boneIndex;
 
                 int stride = bone.KeyType == AnimKeyType.RotationIndexed ? 4 : 8;
-                if ((int)bone.KeyType > 2) a.Warnings.Add($"{bone.Name}: unknown key type {(int)bone.KeyType}, read as type 0");
-                for (int k = 0; k < keyCount; k++)
+                if ((int)bone.KeyType > 2) animation.Warnings.Add($"{bone.Name}: unknown key type {(int)bone.KeyType}, read as type 0");
+                for (int keyIndex = 0; keyIndex < keyCount; keyIndex++)
                 {
-                    int ko = keyOff + k * stride;
-                    if (keyOff <= 0 || ko + stride > anm.Length) { a.Warnings.Add($"{bone.Name}: keys run off the end of the file"); break; }
-                    var key = new AnimKey { Frame = b.U16(ko), Position = Vector3.Zero, Rotation = Quaternion.Identity, Scale = Vector3.One };
+                    int keyOffset = keyOff + keyIndex * stride;
+                    if (keyOff <= 0 || keyOffset + stride > anm.Length) { animation.Warnings.Add($"{bone.Name}: keys run off the end of the file"); break; }
+                    var key = new AnimKey { Frame = reader.U16(keyOffset), Position = Vector3.Zero, Rotation = Quaternion.Identity, Scale = Vector3.One };
                     switch (bone.KeyType)
                     {
                         case AnimKeyType.RotationIndexed:
-                            key.Rotation = Rot(b.U16(ko + 2));
+                            key.Rotation = Rot(reader.U16(keyOffset + 2));
                             break;
                         case AnimKeyType.RotationInline:
                         {
-                            float x = b.S16(ko + 2) / 16384f, y = b.S16(ko + 4) / 16384f, z = b.S16(ko + 6) / 16384f;
-                            float w2 = 1f - x * x - y * y - z * z;
-                            key.Rotation = Quaternion.Normalize(new Quaternion(x, y, z, w2 > 0 ? MathF.Sqrt(w2) : 0f));
+                            float quaternionX = reader.S16(keyOffset + 2) / 16384f, quaternionY = reader.S16(keyOffset + 4) / 16384f, quaternionZ = reader.S16(keyOffset + 6) / 16384f;
+                            float wSquared = 1f - quaternionX * quaternionX - quaternionY * quaternionY - quaternionZ * quaternionZ;
+                            key.Rotation = Quaternion.Normalize(new Quaternion(quaternionX, quaternionY, quaternionZ, wSquared > 0 ? MathF.Sqrt(wSquared) : 0f));
                             break;
                         }
                         default:
-                            key.Position = Vec(b.U16(ko + 2), Vector3.Zero);
-                            key.Rotation = Rot(b.U16(ko + 4));
-                            key.Scale = Vec(b.U16(ko + 6), Vector3.One);
+                            key.Position = Vec(reader.U16(keyOffset + 2), Vector3.Zero);
+                            key.Rotation = Rot(reader.U16(keyOffset + 4));
+                            key.Scale = Vec(reader.U16(keyOffset + 6), Vector3.One);
                             break;
                     }
                     bone.Keys.Add(key);
                 }
-                a.Bones.Add(bone);
+                animation.Bones.Add(bone);
             }
 
-            foreach (var bone in a.Bones)
+            foreach (var bone in animation.Bones)
             {
-                var p = bone.Parent >= 0 ? a.Bones[bone.Parent].BindPosition : Vector3.Zero;
-                bone.LocalOffset = bone.BindPosition - p;
-                if (bone.Parent >= 0) a.Bones[bone.Parent].Children.Add(bone.Index);
-                bone.IsAnimated = bone.Keys.Count > 1 && bone.Keys.Any(k =>
-                    k.Position.LengthSquared() > 1e-6f || MathF.Abs(MathF.Abs(k.Rotation.W) - 1f) > 1e-5f
-                    || (k.Scale - Vector3.One).LengthSquared() > 1e-6f);
+                var parentBind = bone.Parent >= 0 ? animation.Bones[bone.Parent].BindPosition : Vector3.Zero;
+                bone.LocalOffset = bone.BindPosition - parentBind;
+                if (bone.Parent >= 0) animation.Bones[bone.Parent].Children.Add(bone.Index);
+                bone.IsAnimated = bone.Keys.Count > 1 && bone.Keys.Any(key =>
+                    key.Position.LengthSquared() > 1e-6f || MathF.Abs(MathF.Abs(key.Rotation.W) - 1f) > 1e-5f
+                    || (key.Scale - Vector3.One).LengthSquared() > 1e-6f);
             }
-            a.BuildEvalOrder();
-            return a;
+            animation.BuildEvalOrder();
+            return animation;
         }
 
         private void BuildEvalOrder()
         {
             var order = new List<int>(Bones.Count);
             var state = new byte[Bones.Count];   // 0 = new, 1 = visiting, 2 = done
-            void Visit(int i)
+            void Visit(int boneIndex)
             {
-                if (state[i] == 2) return;
-                if (state[i] == 1) { Bones[i].Parent = -1; Warnings.Add($"{Bones[i].Name}: parent loop, treated as root"); return; }
-                state[i] = 1;
-                if (Bones[i].Parent >= 0) Visit(Bones[i].Parent);
-                state[i] = 2;
-                order.Add(i);
+                if (state[boneIndex] == 2) return;
+                if (state[boneIndex] == 1) { Bones[boneIndex].Parent = -1; Warnings.Add($"{Bones[boneIndex].Name}: parent loop, treated as root"); return; }
+                state[boneIndex] = 1;
+                if (Bones[boneIndex].Parent >= 0) Visit(Bones[boneIndex].Parent);
+                state[boneIndex] = 2;
+                order.Add(boneIndex);
             }
-            for (int i = 0; i < Bones.Count; i++) Visit(i);
+            for (int boneIndex = 0; boneIndex < Bones.Count; boneIndex++) Visit(boneIndex);
             EvalOrder = order.ToArray();
         }
 
@@ -206,16 +206,16 @@ namespace Mk2.Formats
         /// Krome's Decompress_Vector (from the GameCube ELF): each axis is a 16-bit signed mantissa, and
         /// w packs three 5-bit exponents (x in bits 10–14, y in 5–9, z in 0–4). Exponent 0 means 0.0.
         /// </summary>
-        public static Vector3 DecompressVector(short x, short y, short z, ushort w)
+        public static Vector3 DecompressVector(short packedX, short packedY, short packedZ, ushort exponents)
         {
-            static float Axis(short v, int e)
+            static float Axis(short mantissa, int exponent)
             {
-                if (e == 0) return 0f;
-                int bits = ((v & unchecked((int)0xFFFF8000)) << 8) | (v & 0x7FFF);
-                bits = (bits << 8) | ((e + 0x70) << 23);
+                if (exponent == 0) return 0f;
+                int bits = ((mantissa & unchecked((int)0xFFFF8000)) << 8) | (mantissa & 0x7FFF);
+                bits = (bits << 8) | ((exponent + 0x70) << 23);
                 return BitConverter.Int32BitsToSingle(bits);
             }
-            return new Vector3(Axis(x, (w >> 10) & 0x1F), Axis(y, (w >> 5) & 0x1F), Axis(z, w & 0x1F));
+            return new Vector3(Axis(packedX, (exponents >> 10) & 0x1F), Axis(packedY, (exponents >> 5) & 0x1F), Axis(packedZ, exponents & 0x1F));
         }
 
         /// <summary>Interpolated local transform of one bone at a (fractional) frame.</summary>
@@ -228,50 +228,50 @@ namespace Mk2.Formats
                 return;
             }
             // Last key with Frame <= frame (binary search; keys are sorted by frame).
-            int lo = 0, hi = keys.Count - 1;
-            if (frame <= keys[0].Frame) hi = 0;
+            int low = 0, high = keys.Count - 1;
+            if (frame <= keys[0].Frame) high = 0;
             else
             {
-                while (lo < hi)
+                while (low < high)
                 {
-                    int mid = (lo + hi + 1) >> 1;
-                    if (keys[mid].Frame <= frame) lo = mid; else hi = mid - 1;
+                    int mid = (low + high + 1) >> 1;
+                    if (keys[mid].Frame <= frame) low = mid; else high = mid - 1;
                 }
             }
-            var k0 = keys[hi];
-            var k1 = hi + 1 < keys.Count ? keys[hi + 1] : k0;
-            float t = k1.Frame > k0.Frame ? Math.Clamp((frame - k0.Frame) / (k1.Frame - k0.Frame), 0f, 1f) : 0f;
-            translation = bone.LocalOffset + Vector3.Lerp(k0.Position, k1.Position, t);
-            scale = Vector3.Lerp(k0.Scale, k1.Scale, t);
-            var q1 = k1.Rotation;
-            if (Quaternion.Dot(k0.Rotation, q1) < 0) q1 = -q1;
-            rotation = Quaternion.Normalize(Quaternion.Lerp(k0.Rotation, q1, t));
+            var previous = keys[high];
+            var next = high + 1 < keys.Count ? keys[high + 1] : previous;
+            float blend = next.Frame > previous.Frame ? Math.Clamp((frame - previous.Frame) / (next.Frame - previous.Frame), 0f, 1f) : 0f;
+            translation = bone.LocalOffset + Vector3.Lerp(previous.Position, next.Position, blend);
+            scale = Vector3.Lerp(previous.Scale, next.Scale, blend);
+            var nextRotation = next.Rotation;
+            if (Quaternion.Dot(previous.Rotation, nextRotation) < 0) nextRotation = -nextRotation;
+            rotation = Quaternion.Normalize(Quaternion.Lerp(previous.Rotation, nextRotation, blend));
         }
 
         /// <summary>Model-space bone matrices (row vectors) at a frame. <paramref name="frame"/> &lt; 0 gives the bind pose.</summary>
         public void ComputePose(float frame, Matrix4x4[] globals)
         {
-            foreach (int i in EvalOrder)
+            foreach (int boneIndex in EvalOrder)
             {
-                var bone = Bones[i];
+                var bone = Bones[boneIndex];
                 Matrix4x4 local;
                 if (frame < 0) local = Matrix4x4.CreateTranslation(bone.LocalOffset);
                 else
                 {
-                    SampleLocal(bone, frame, out var t, out var r, out var s);
-                    local = Matrix4x4.CreateScale(s)
-                          * Matrix4x4.CreateFromQuaternion(Quaternion.Conjugate(r))
-                          * Matrix4x4.CreateTranslation(t);
+                    SampleLocal(bone, frame, out var translation, out var rotation, out var scale);
+                    local = Matrix4x4.CreateScale(scale)
+                          * Matrix4x4.CreateFromQuaternion(Quaternion.Conjugate(rotation))
+                          * Matrix4x4.CreateTranslation(translation);
                 }
-                globals[i] = bone.Parent >= 0 ? local * globals[bone.Parent] : local;
+                globals[boneIndex] = bone.Parent >= 0 ? local * globals[bone.Parent] : local;
             }
         }
 
         /// <summary>Converts model-space bone matrices into skinning matrices (bind pose → posed).</summary>
         public void SkinMatrices(Matrix4x4[] globals, Matrix4x4[] skin)
         {
-            for (int i = 0; i < Bones.Count; i++)
-                skin[i] = Matrix4x4.CreateTranslation(-Bones[i].BindPosition) * globals[i];
+            for (int boneIndex = 0; boneIndex < Bones.Count; boneIndex++)
+                skin[boneIndex] = Matrix4x4.CreateTranslation(-Bones[boneIndex].BindPosition) * globals[boneIndex];
         }
 
         /// <summary>"z_A002_Head" → "A002": the actor code cutscene animations use to name their target's bones.</summary>
@@ -279,9 +279,9 @@ namespace Mk2.Formats
         {
             foreach (var bone in Bones)
             {
-                var n = bone.Name;
-                if (n.Length > 7 && n[1] == '_' && char.IsLetter(n[2]) && char.IsDigit(n[3]) && char.IsDigit(n[4]) && char.IsDigit(n[5]) && n[6] == '_')
-                    return n.Substring(2, 4);
+                var name = bone.Name;
+                if (name.Length > 7 && name[1] == '_' && char.IsLetter(name[2]) && char.IsDigit(name[3]) && char.IsDigit(name[4]) && char.IsDigit(name[5]) && name[6] == '_')
+                    return name.Substring(2, 4);
             }
             return null;
         }

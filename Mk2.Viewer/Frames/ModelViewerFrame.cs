@@ -106,7 +106,7 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
         }
 
         private void RenderBoneTree() {
-            foreach (var bone in animation.Bones.Where(bone => bone.Parent < 0)) RenderBone(bone);
+            foreach (var bone in animation.Bones.Where(candidate => candidate.Parent < 0)) RenderBone(bone);
         }
 
         private void RenderBone(AnimBone bone) {

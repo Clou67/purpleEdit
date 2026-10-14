@@ -6,8 +6,8 @@ namespace Mk2.Viewer
     {
         [System.STAThread]
         static void Main(string[] args) {
-            Window wnd = new Window(args);
-            wnd.Run();
+            Window window = new Window(args);
+            window.Run();
         }
     }
 }

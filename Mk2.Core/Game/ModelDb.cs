@@ -10,27 +10,27 @@ namespace Mk2.Game
     /// </summary>
     public sealed class ModelDb
     {
-        private readonly Dictionary<string, BniSection> _sections = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, BniSection> sections = new(StringComparer.OrdinalIgnoreCase);
 
         public ModelDb(BniFile modelBni)
         {
             if (modelBni == null) return;
-            foreach (var s in modelBni.Sections) _sections.TryAdd(s.Name, s);
+            foreach (var section in modelBni.Sections) sections.TryAdd(section.Name, section);
         }
 
-        public bool Has(string name) => _sections.ContainsKey(name);
-        public BniSection Section(string name) => _sections.TryGetValue(name, out var s) ? s : null;
+        public bool Has(string name) => sections.ContainsKey(name);
+        public BniSection Section(string name) => sections.TryGetValue(name, out var section) ? section : null;
 
         /// <summary>Field value with alias inheritance.</summary>
         public string Get(string name, string field)
         {
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            string cur = name;
-            while (cur != null && seen.Add(cur) && _sections.TryGetValue(cur, out var s))
+            string current = name;
+            while (current != null && seen.Add(current) && sections.TryGetValue(current, out var section))
             {
-                var v = s.Field(field);
-                if (v != null) return v.JoinedValues;
-                cur = s.Get("alias");
+                var node = section.Field(field);
+                if (node != null) return node.JoinedValues;
+                current = section.Get("alias");
             }
             return null;
         }
@@ -38,11 +38,11 @@ namespace Mk2.Game
         public IEnumerable<string> AliasChain(string name)
         {
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            string cur = name;
-            while (cur != null && seen.Add(cur))
+            string current = name;
+            while (current != null && seen.Add(current))
             {
-                yield return cur;
-                cur = _sections.TryGetValue(cur, out var s) ? s.Get("alias") : null;
+                yield return current;
+                current = sections.TryGetValue(current, out var section) ? section.Get("alias") : null;
             }
         }
 
@@ -50,20 +50,20 @@ namespace Mk2.Game
         public List<string> ModelCandidates(string className)
         {
             var list = new List<string>();
-            void Add(string s)
+            void Add(string entry)
             {
-                if (string.IsNullOrWhiteSpace(s) || s == "none") return;
-                s = s.Replace("%s", className).Trim();
-                int sp = s.IndexOf(' ');
-                if (sp > 0) s = s[..sp];
-                if (!list.Contains(s, StringComparer.OrdinalIgnoreCase)) list.Add(s);
+                if (string.IsNullOrWhiteSpace(entry) || entry == "none") return;
+                entry = entry.Replace("%s", className).Trim();
+                int space = entry.IndexOf(' ');
+                if (space > 0) entry = entry[..space];
+                if (!list.Contains(entry, StringComparer.OrdinalIgnoreCase)) list.Add(entry);
             }
             // The section's own "model" beats inherited ones, so walk the chain in order.
-            foreach (var n in AliasChain(className))
+            foreach (var alias in AliasChain(className))
             {
-                if (!_sections.TryGetValue(n, out var s)) continue;
-                Add(s.Get("model"));
-                Add(s.Get("badfile"));
+                if (!sections.TryGetValue(alias, out var section)) continue;
+                Add(section.Get("model"));
+                Add(section.Get("badfile"));
             }
             Add(className);
             return list;
@@ -72,8 +72,8 @@ namespace Mk2.Game
         /// <summary>True when the class is flagged not to draw (e.g. "type global update- draw-").</summary>
         public bool IsHidden(string className)
         {
-            var t = Get(className, "type");
-            return t != null && t.Contains("draw-", StringComparison.OrdinalIgnoreCase);
+            var type = Get(className, "type");
+            return type != null && type.Contains("draw-", StringComparison.OrdinalIgnoreCase);
         }
     }
 }

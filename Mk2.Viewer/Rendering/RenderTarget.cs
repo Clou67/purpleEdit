@@ -8,14 +8,14 @@ namespace Mk2.Viewer.Rendering {
         public int Width { get; private set; }
         public int Height { get; private set; }
 
-        private int _depthRbo;
-        private bool _created;
+        private int depthRenderbuffer;
+        private bool created;
 
         public void RenderToTexture(int width, int height, Action renderFunction) {
             width = Math.Max(1, width);
             height = Math.Max(1, height);
 
-            if (!_created)
+            if (!created)
                 Create(width, height);
             else if (width != Width || height != Height)
                 Resize(width, height);
@@ -58,18 +58,18 @@ namespace Mk2.Viewer.Rendering {
             GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
                 TextureTarget.Texture2D, ColorTexture, 0);
 
-            _depthRbo = GL.GenRenderbuffer();
-            GL.BindRenderbuffer(RenderbufferTarget.Renderbuffer, _depthRbo);
+            depthRenderbuffer = GL.GenRenderbuffer();
+            GL.BindRenderbuffer(RenderbufferTarget.Renderbuffer, depthRenderbuffer);
             GL.RenderbufferStorage(RenderbufferTarget.Renderbuffer, RenderbufferStorage.Depth24Stencil8, width, height);
             GL.FramebufferRenderbuffer(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthStencilAttachment,
-                RenderbufferTarget.Renderbuffer, _depthRbo);
+                RenderbufferTarget.Renderbuffer, depthRenderbuffer);
 
             var status = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
             if (status != FramebufferErrorCode.FramebufferComplete)
                 throw new InvalidOperationException("RenderTarget framebuffer incomplete: " + status);
 
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-            _created = true;
+            created = true;
         }
 
         private void Resize(int width, int height) {
@@ -80,16 +80,16 @@ namespace Mk2.Viewer.Rendering {
             GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba8, width, height, 0,
                 PixelFormat.Rgba, PixelType.UnsignedByte, IntPtr.Zero);
 
-            GL.BindRenderbuffer(RenderbufferTarget.Renderbuffer, _depthRbo);
+            GL.BindRenderbuffer(RenderbufferTarget.Renderbuffer, depthRenderbuffer);
             GL.RenderbufferStorage(RenderbufferTarget.Renderbuffer, RenderbufferStorage.Depth24Stencil8, width, height);
         }
 
         public void Dispose() {
-            if (!_created) return;
+            if (!created) return;
             GL.DeleteFramebuffer(Fbo);
             GL.DeleteTexture(ColorTexture);
-            GL.DeleteRenderbuffer(_depthRbo);
-            _created = false;
+            GL.DeleteRenderbuffer(depthRenderbuffer);
+            created = false;
         }
     }
 }

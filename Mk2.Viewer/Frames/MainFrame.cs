@@ -53,7 +53,7 @@ namespace Mk2.Viewer.Frames {
             controller.Update(Viewer, 1f / 60f);
             RenderMenuBar();
             RenderDockSpace();
-            foreach (var frame in frames.Where(frame => frame.isOpen))
+            foreach (var frame in frames.Where(candidate => candidate.isOpen))
                 frame.RenderAsWindow(1f / 60f);
             controller.Render();
         }
@@ -191,7 +191,7 @@ namespace Mk2.Viewer.Frames {
             ImGui.Separator();
             string activeFilter = filter;
             if (ImGui.BeginChild("##list", new Vec2(260, 360))) {
-                foreach (var name in names.Where(name => activeFilter.Length == 0 || name.Contains(activeFilter, StringComparison.OrdinalIgnoreCase)))
+                foreach (var name in names.Where(candidate => activeFilter.Length == 0 || candidate.Contains(activeFilter, StringComparison.OrdinalIgnoreCase)))
                     if (ImGui.MenuItem(name)) onPick(name);
             }
             ImGui.EndChild();

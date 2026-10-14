@@ -20,36 +20,36 @@ namespace Mk2.IO
 
         public int Length => Data.Length;
 
-        public byte U8(int o) => Data[o];
-        public sbyte S8(int o) => (sbyte)Data[o];
+        public byte U8(int offset) => Data[offset];
+        public sbyte S8(int offset) => (sbyte)Data[offset];
 
-        public ushort U16(int o) => BigEndian
-            ? BinaryPrimitives.ReadUInt16BigEndian(Data.AsSpan(o))
-            : BinaryPrimitives.ReadUInt16LittleEndian(Data.AsSpan(o));
+        public ushort U16(int offset) => BigEndian
+            ? BinaryPrimitives.ReadUInt16BigEndian(Data.AsSpan(offset))
+            : BinaryPrimitives.ReadUInt16LittleEndian(Data.AsSpan(offset));
 
-        public short S16(int o) => BigEndian
-            ? BinaryPrimitives.ReadInt16BigEndian(Data.AsSpan(o))
-            : BinaryPrimitives.ReadInt16LittleEndian(Data.AsSpan(o));
+        public short S16(int offset) => BigEndian
+            ? BinaryPrimitives.ReadInt16BigEndian(Data.AsSpan(offset))
+            : BinaryPrimitives.ReadInt16LittleEndian(Data.AsSpan(offset));
 
-        public uint U32(int o) => BigEndian
-            ? BinaryPrimitives.ReadUInt32BigEndian(Data.AsSpan(o))
-            : BinaryPrimitives.ReadUInt32LittleEndian(Data.AsSpan(o));
+        public uint U32(int offset) => BigEndian
+            ? BinaryPrimitives.ReadUInt32BigEndian(Data.AsSpan(offset))
+            : BinaryPrimitives.ReadUInt32LittleEndian(Data.AsSpan(offset));
 
-        public int S32(int o) => (int)U32(o);
+        public int S32(int offset) => (int)U32(offset);
 
-        public float F32(int o) => BitConverter.Int32BitsToSingle(S32(o));
+        public float F32(int offset) => BitConverter.Int32BitsToSingle(S32(offset));
 
-        public string CStr(int o, int max = int.MaxValue)
+        public string CStr(int offset, int max = int.MaxValue)
         {
-            if (o < 0 || o >= Data.Length) return string.Empty;
-            int end = o;
-            int lim = (int)Math.Min((long)Data.Length, (long)o + max);
-            while (end < lim && Data[end] != 0) end++;
-            return Encoding.Latin1.GetString(Data, o, end - o);
+            if (offset < 0 || offset >= Data.Length) return string.Empty;
+            int end = offset;
+            int limit = (int)Math.Min((long)Data.Length, (long)offset + max);
+            while (end < limit && Data[end] != 0) end++;
+            return Encoding.Latin1.GetString(Data, offset, end - offset);
         }
 
-        public string FixedStr(int o, int len) => CStr(o, len);
+        public string FixedStr(int offset, int length) => CStr(offset, length);
 
-        public static int Align(int v, int a) => (v + a - 1) & ~(a - 1);
+        public static int Align(int value, int alignment) => (value + alignment - 1) & ~(alignment - 1);
     }
 }

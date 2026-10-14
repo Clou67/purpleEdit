@@ -12,13 +12,13 @@ namespace Mk2.Game
             return game.AllNames(".anm").Select(Path.GetFileNameWithoutExtension)
                        .Where(models.Contains)
                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                       .OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+                       .OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList();
         }
 
         public static List<string> AllAnimations(GameData game) =>
             game.AllNames(".anm").Select(Path.GetFileNameWithoutExtension)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList();
 
         /// <summary>
         /// Finds the model an animation drives:
@@ -33,15 +33,15 @@ namespace Mk2.Game
             string code = anim?.ActorCode();
             if (code == null) return null;
             var candidates = game.AllNames(".mdl").Select(Path.GetFileNameWithoutExtension)
-                .Where(n => n.StartsWith(code + "_", StringComparison.OrdinalIgnoreCase))
+                .Where(name => name.StartsWith(code + "_", StringComparison.OrdinalIgnoreCase))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(n => n.Length).ThenBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
-            foreach (var c in candidates)
+                .OrderBy(name => name.Length).ThenBy(name => name, StringComparer.OrdinalIgnoreCase).ToList();
+            foreach (var candidate in candidates)
             {
-                var mdl = game.Read(c + ".mdl", packs);
-                if (mdl != null && mdl.Length > 0x10 && BitConverter.ToUInt16(mdl, 8) == anim.Bones.Count && game.Exists(c + ".mdg", packs)) return c;
+                var mdl = game.Read(candidate + ".mdl", packs);
+                if (mdl != null && mdl.Length > 0x10 && BitConverter.ToUInt16(mdl, 8) == anim.Bones.Count && game.Exists(candidate + ".mdg", packs)) return candidate;
             }
-            return candidates.FirstOrDefault(c => game.Exists(c + ".mdg", packs));
+            return candidates.FirstOrDefault(candidate => game.Exists(candidate + ".mdg", packs));
         }
 
         /// <summary>Checks that a model and an animation describe the same skeleton.</summary>
@@ -51,9 +51,9 @@ namespace Mk2.Game
             int nodes = model.AnimNodePositions.Count;
             if (nodes != anim.Bones.Count)
                 return $"model has {nodes} anim nodes but the animation has {anim.Bones.Count} bones — parts may not move correctly";
-            for (int i = 0; i < nodes; i++)
-                if ((model.AnimNodePositions[i] - anim.Bones[i].BindPosition).Length() > 0.5f)
-                    return $"bind position of bone {i} ({anim.Bones[i].Name}) differs between the model and the animation";
+            for (int index = 0; index < nodes; index++)
+                if ((model.AnimNodePositions[index] - anim.Bones[index].BindPosition).Length() > 0.5f)
+                    return $"bind position of bone {index} ({anim.Bones[index].Name}) differs between the model and the animation";
             return null;
         }
     }

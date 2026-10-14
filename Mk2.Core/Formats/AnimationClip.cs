@@ -34,44 +34,44 @@ namespace Mk2.Formats
         public string ModelName;
         public List<AnimClip> Clips = new();
 
-        public static AnimSet Parse(byte[] d)
+        public static AnimSet Parse(byte[] data)
         {
-            var b = new Bin(d);
-            if (d.Length < 0x48) throw new InvalidDataException("BBI too short");
-            var s = new AnimSet { ModelName = b.CStr(0, 0x20) };
-            int count = b.S32(0x40);
+            var reader = new Bin(data);
+            if (data.Length < 0x48) throw new InvalidDataException("BBI too short");
+            var clips = new AnimSet { ModelName = reader.CStr(0, 0x20) };
+            int count = reader.S32(0x40);
             if (count < 0 || count > 4096) throw new InvalidDataException($"BBI clip count {count} looks wrong");
-            for (int i = 0; i < count; i++)
+            for (int index = 0; index < count; index++)
             {
-                int o = 0x48 + i * 0x30;
-                if (o + 0x30 > d.Length) break;
-                var c = new AnimClip
+                int offset = 0x48 + index * 0x30;
+                if (offset + 0x30 > data.Length) break;
+                var clip = new AnimClip
                 {
-                    Name = b.CStr(b.S32(o)),
-                    Length = b.S32(o + 4),
-                    Loop = b.U16(o + 8) == 1,
-                    Start = b.U16(o + 0xA),
-                    End = b.U16(o + 0xC),
+                    Name = reader.CStr(reader.S32(offset)),
+                    Length = reader.S32(offset + 4),
+                    Loop = reader.U16(offset + 8) == 1,
+                    Start = reader.U16(offset + 0xA),
+                    End = reader.U16(offset + 0xC),
                 };
-                if (string.IsNullOrEmpty(c.Name)) c.Name = "clip" + i;
-                if (c.End < c.Start) c.End = c.Start;
-                int evOff = b.S32(o + 0x10), evCount = b.S32(o + 0x14);
-                for (int k = 0; k < evCount && k < 256 && evOff > 0; k++)
+                if (string.IsNullOrEmpty(clip.Name)) clip.Name = "clip" + index;
+                if (clip.End < clip.Start) clip.End = clip.Start;
+                int evOff = reader.S32(offset + 0x10), evCount = reader.S32(offset + 0x14);
+                for (int eventIndex = 0; eventIndex < evCount && eventIndex < 256 && evOff > 0; eventIndex++)
                 {
-                    int e = evOff + k * 0x10;
-                    if (e + 0x10 > d.Length) break;
-                    c.Events.Add(new AnimEvent { Name = b.CStr(b.S32(e)), Type = b.U16(e + 4), Frame = b.U16(e + 6) });
+                    int eventOffset = evOff + eventIndex * 0x10;
+                    if (eventOffset + 0x10 > data.Length) break;
+                    clip.Events.Add(new AnimEvent { Name = reader.CStr(reader.S32(eventOffset)), Type = reader.U16(eventOffset + 4), Frame = reader.U16(eventOffset + 6) });
                 }
-                s.Clips.Add(c);
+                clips.Clips.Add(clip);
             }
-            return s;
+            return clips;
         }
 
         /// <summary>A single clip covering the whole timeline, for animations without a .bbi.</summary>
-        public static AnimSet WholeTimeline(Animation a) => new AnimSet
+        public static AnimSet WholeTimeline(Animation animation) => new AnimSet
         {
-            ModelName = a.Name,
-            Clips = { new AnimClip { Name = "(all frames)", Start = 0, End = Math.Max(0, a.FrameCount - 1), Length = a.FrameCount, Loop = true } },
+            ModelName = animation.Name,
+            Clips = { new AnimClip { Name = "(all frames)", Start = 0, End = Math.Max(0, animation.FrameCount - 1), Length = animation.FrameCount, Loop = true } },
         };
     }
 }

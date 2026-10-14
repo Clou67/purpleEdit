@@ -34,16 +34,16 @@ namespace Mk2.Formats
         public bool Skinned;
 
         /// <summary>Expands strips to a triangle list (indices into Vertices).</summary>
-        public void Triangulate(List<ModelVertex> verts, List<int> indices)
+        public void Triangulate(List<ModelVertex> vertices, List<int> indices)
         {
-            foreach (var s in Strips)
+            foreach (var strip in Strips)
             {
-                int b = verts.Count;
-                verts.AddRange(s.Vertices);
-                for (int i = 0; i + 2 < s.Vertices.Count; i++)
+                int firstVertex = vertices.Count;
+                vertices.AddRange(strip.Vertices);
+                for (int index = 0; index + 2 < strip.Vertices.Count; index++)
                 {
-                    if ((i & 1) == 0) { indices.Add(b + i); indices.Add(b + i + 1); indices.Add(b + i + 2); }
-                    else { indices.Add(b + i + 1); indices.Add(b + i); indices.Add(b + i + 2); }
+                    if ((index & 1) == 0) { indices.Add(firstVertex + index); indices.Add(firstVertex + index + 1); indices.Add(firstVertex + index + 2); }
+                    else { indices.Add(firstVertex + index + 1); indices.Add(firstVertex + index); indices.Add(firstVertex + index + 2); }
                 }
             }
         }
@@ -117,93 +117,93 @@ namespace Mk2.Formats
 
         public static Model Load(byte[] mdl, byte[] mdg, string name = null)
         {
-            var b = new Bin(mdl);
-            if (mdl.Length < 0x70 || b.CStr(0, 4) != "MDL3")
+            var reader = new Bin(mdl);
+            if (mdl.Length < 0x70 || reader.CStr(0, 4) != "MDL3")
             {
                 // GameCube files are big endian.
                 if (mdl.Length >= 4 && mdl[0] == '3' && mdl[1] == 'L' && mdl[2] == 'D' && mdl[3] == 'M')
                     throw new NotSupportedException("Big-endian (GameCube) MDL3 is not supported yet");
                 throw new InvalidDataException("Not an MDL3 file");
             }
-            var m = new Model { Name = name };
-            int compCount = b.U16(4), matCount = b.U16(6), nodeCount = b.U16(8), refCount = b.U16(0xA);
-            int anlCount = b.U16(0x10);
-            m.DeclaredVertexCount = b.S32(0x14);
-            m.DeclaredTriangleCount = b.S32(0x18);
-            m.DeclaredStripCount = b.U16(0x1E);
-            m.BoundsMin = new Vector3(b.F32(0x30), b.F32(0x34), b.F32(0x38));
-            m.Radius = b.F32(0x3C);
-            m.BoundsSize = new Vector3(b.F32(0x40), b.F32(0x44), b.F32(0x48));
-            int compOff = b.S32(0x50), matOff = b.S32(0x54), refOff = b.S32(0x58), nodeOff = b.S32(0x5C);
-            int anlOff = b.S32(0x64), lutOff = b.S32(0x68);
+            var model = new Model { Name = name };
+            int compCount = reader.U16(4), matCount = reader.U16(6), nodeCount = reader.U16(8), refCount = reader.U16(0xA);
+            int anlCount = reader.U16(0x10);
+            model.DeclaredVertexCount = reader.S32(0x14);
+            model.DeclaredTriangleCount = reader.S32(0x18);
+            model.DeclaredStripCount = reader.U16(0x1E);
+            model.BoundsMin = new Vector3(reader.F32(0x30), reader.F32(0x34), reader.F32(0x38));
+            model.Radius = reader.F32(0x3C);
+            model.BoundsSize = new Vector3(reader.F32(0x40), reader.F32(0x44), reader.F32(0x48));
+            int compOff = reader.S32(0x50), matOff = reader.S32(0x54), refOff = reader.S32(0x58), nodeOff = reader.S32(0x5C);
+            int anlOff = reader.S32(0x64), lutOff = reader.S32(0x68);
 
-            for (int i = 0; i < matCount; i++) m.MaterialNames.Add(b.CStr(b.S32(matOff + i * 4)));
+            for (int index = 0; index < matCount; index++) model.MaterialNames.Add(reader.CStr(reader.S32(matOff + index * 4)));
 
-            for (int c = 0; c < compCount; c++)
+            for (int componentIndex = 0; componentIndex < compCount; componentIndex++)
             {
-                int o = compOff + c * 0x40;
-                m.Components.Add(new ModelComponent
+                int offset = compOff + componentIndex * 0x40;
+                model.Components.Add(new ModelComponent
                 {
-                    BoundsMin = new Vector3(b.F32(o), b.F32(o + 4), b.F32(o + 8)),
-                    Radius = b.F32(o + 12),
-                    BoundsSize = new Vector3(b.F32(o + 16), b.F32(o + 20), b.F32(o + 24)),
-                    Name = b.CStr(b.S32(o + 0x30)),
-                    Extra = b.CStr(b.S32(o + 0x34)),
-                    BoneCount = b.U8(o + 0x38),
-                    RigidBone = b.U16(o + 0x3A) == 0xFFFF ? -1 : b.U16(o + 0x3A),
+                    BoundsMin = new Vector3(reader.F32(offset), reader.F32(offset + 4), reader.F32(offset + 8)),
+                    Radius = reader.F32(offset + 12),
+                    BoundsSize = new Vector3(reader.F32(offset + 16), reader.F32(offset + 20), reader.F32(offset + 24)),
+                    Name = reader.CStr(reader.S32(offset + 0x30)),
+                    Extra = reader.CStr(reader.S32(offset + 0x34)),
+                    BoneCount = reader.U8(offset + 0x38),
+                    RigidBone = reader.U16(offset + 0x3A) == 0xFFFF ? -1 : reader.U16(offset + 0x3A),
                 });
             }
 
             try
             {
-                for (int i = 0; i < refCount && refOff > 0; i++)
+                for (int index = 0; index < refCount && refOff > 0; index++)
                 {
-                    int o = b.S32(refOff + i * 4);
-                    if (o <= 0 || o + 0x14 > mdl.Length) continue;
-                    m.RefPoints.Add(new RefPoint
+                    int offset = reader.S32(refOff + index * 4);
+                    if (offset <= 0 || offset + 0x14 > mdl.Length) continue;
+                    model.RefPoints.Add(new RefPoint
                     {
-                        Position = new Vector3(b.F32(o), b.F32(o + 4), b.F32(o + 8)),
-                        Name = b.CStr(b.S32(o + 0x10)),
+                        Position = new Vector3(reader.F32(offset), reader.F32(offset + 4), reader.F32(offset + 8)),
+                        Name = reader.CStr(reader.S32(offset + 0x10)),
                     });
                 }
-                for (int i = 0; i < nodeCount && nodeOff > 0 && nodeOff + i * 16 + 12 <= mdl.Length; i++)
-                    m.AnimNodePositions.Add(new Vector3(b.F32(nodeOff + i * 16), b.F32(nodeOff + i * 16 + 4), b.F32(nodeOff + i * 16 + 8)));
-                for (int i = 0; i < anlCount && anlOff > 0; i++)
+                for (int index = 0; index < nodeCount && nodeOff > 0 && nodeOff + index * 16 + 12 <= mdl.Length; index++)
+                    model.AnimNodePositions.Add(new Vector3(reader.F32(nodeOff + index * 16), reader.F32(nodeOff + index * 16 + 4), reader.F32(nodeOff + index * 16 + 8)));
+                for (int index = 0; index < anlCount && anlOff > 0; index++)
                 {
-                    int o = anlOff + i * 0x80;
-                    int len = Math.Max(0, Math.Min(0x80, mdl.Length - o));
-                    m.AnimNodeLists.Add(mdl.AsSpan(o, len).ToArray());
+                    int offset = anlOff + index * 0x80;
+                    int length = Math.Max(0, Math.Min(0x80, mdl.Length - offset));
+                    model.AnimNodeLists.Add(mdl.AsSpan(offset, length).ToArray());
                 }
             }
-            catch (Exception ex) { m.Warnings.Add("ref/anim tables: " + ex.Message); }
+            catch (Exception exception) { model.Warnings.Add("ref/anim tables: " + exception.Message); }
 
-            var g = new Bin(mdg);
-            if (mdg.Length < 4 || g.CStr(0, 4) != "MDG3") throw new InvalidDataException("Not an MDG3 file");
+            var guts = new Bin(mdg);
+            if (mdg.Length < 4 || guts.CStr(0, 4) != "MDG3") throw new InvalidDataException("Not an MDG3 file");
 
-            for (int t = 0; t < matCount; t++)
+            for (int materialIndex = 0; materialIndex < matCount; materialIndex++)
             {
-                for (int c = 0; c < compCount; c++)
+                for (int componentIndex = 0; componentIndex < compCount; componentIndex++)
                 {
-                    int off = b.S32(lutOff + (t * compCount + c) * 4);
+                    int offset = reader.S32(lutOff + (materialIndex * compCount + componentIndex) * 4);
                     int guard = 0;
-                    while (off > 0 && off < mdg.Length && guard++ < 10000)
+                    while (offset > 0 && offset < mdg.Length && guard++ < 10000)
                     {
-                        var mesh = new ModelMesh { MaterialIndex = t, ComponentIndex = c, MdgOffset = off };
+                        var mesh = new ModelMesh { MaterialIndex = materialIndex, ComponentIndex = componentIndex, MdgOffset = offset };
                         int next;
-                        try { next = ReadMesh(g, off, mesh); }
-                        catch (Exception ex)
+                        try { next = ReadMesh(guts, offset, mesh); }
+                        catch (Exception exception)
                         {
-                            m.Warnings.Add($"mesh @0x{off:X}: {ex.Message}");
+                            model.Warnings.Add($"mesh @0x{offset:X}: {exception.Message}");
                             break;
                         }
-                        RemapBones(m, mesh);
-                        m.Meshes.Add(mesh);
-                        m.Components[c].Meshes.Add(mesh);
-                        off = next;
+                        RemapBones(model, mesh);
+                        model.Meshes.Add(mesh);
+                        model.Components[componentIndex].Meshes.Add(mesh);
+                        offset = next;
                     }
                 }
             }
-            return m;
+            return model;
         }
 
         /// <summary>
@@ -223,15 +223,15 @@ namespace Mk2.Formats
             return bones;
         }
 
-        private static void RemapBones(Model m, ModelMesh mesh)
+        private static void RemapBones(Model model, ModelMesh mesh)
         {
             if (!mesh.Skinned || mesh.AnimNodeList == 0xFFFF) return;
-            if (mesh.AnimNodeList >= m.AnimNodeLists.Count)
+            if (mesh.AnimNodeList >= model.AnimNodeLists.Count)
             {
-                m.Warnings.Add($"mesh @0x{mesh.MdgOffset:X}: anim node list {mesh.AnimNodeList} out of range");
+                model.Warnings.Add($"mesh @0x{mesh.MdgOffset:X}: anim node list {mesh.AnimNodeList} out of range");
                 return;
             }
-            var list = m.AnimNodeLists[mesh.AnimNodeList];
+            var list = model.AnimNodeLists[mesh.AnimNodeList];
             int listLength = list.Length > 0 ? Math.Min(list[0], list.Length - 1) : 0;
             byte Map(byte node) => node < listLength ? list[node + 1] : NoBone;
             foreach (var strip in mesh.Strips)
@@ -245,134 +245,134 @@ namespace Mk2.Formats
             }
         }
 
-        private static int ReadMesh(Bin g, int off, ModelMesh mesh)
+        private static int ReadMesh(Bin guts, int offset, ModelMesh mesh)
         {
-            int stripCount = g.U16(off + 6);
-            mesh.AnimNodeList = g.U16(off + 8);
-            int next = g.S32(off + 12);
+            int stripCount = guts.U16(offset + 6);
+            mesh.AnimNodeList = guts.U16(offset + 8);
+            int next = guts.S32(offset + 12);
 
-            int p = off + 0x10;
-            uint tag = g.U32(p);
-            int end = p + 16 + (int)(tag & 0xFFFF) * 16;
-            p += 8;
+            int position = offset + 0x10;
+            uint tag = guts.U32(position);
+            int end = position + 16 + (int)(tag & 0xFFFF) * 16;
+            position += 8;
 
             var unpacked = new Dictionary<int, (int cmd, int num, int at)>();
             int guard = 0;
             while (mesh.Strips.Count < stripCount)
             {
                 if (++guard > 1_000_000) throw new InvalidDataException("VIF parse runaway");
-                if (p >= end)
+                if (position >= end)
                 {
-                    p = Bin.Align(p, 16);
-                    if (p + 16 > g.Length) throw new InvalidDataException("DMA chain ran off end of file");
-                    tag = g.U32(p);
+                    position = Bin.Align(position, 16);
+                    if (position + 16 > guts.Length) throw new InvalidDataException("DMA chain ran off end of file");
+                    tag = guts.U32(position);
                     int id = (int)(tag >> 28) & 7;
-                    end = p + 16 + (int)(tag & 0xFFFF) * 16;
-                    p += 8;
+                    end = position + 16 + (int)(tag & 0xFFFF) * 16;
+                    position += 8;
                     if (id == 7 && (tag & 0xFFFF) == 0) throw new InvalidDataException("DMA end before all strips");
                     continue;
                 }
-                uint code = g.U32(p); p += 4;
-                int cmd = (int)(code >> 24) & 0x7F;
-                int num = (int)(code >> 16) & 0xFF;
-                int imm = (int)(code & 0xFFFF);
-                if ((cmd & 0x60) == 0x60)
+                uint code = guts.U32(position); position += 4;
+                int command = (int)(code >> 24) & 0x7F;
+                int count = (int)(code >> 16) & 0xFF;
+                int immediate = (int)(code & 0xFFFF);
+                if ((command & 0x60) == 0x60)
                 {
-                    int vn = ((cmd >> 2) & 3) + 1, vl = cmd & 3;
-                    if (num == 0) num = 256;
-                    int esz = vl == 3 ? 2 : vn * (4 >> vl);
-                    unpacked[imm & 0x3FF] = (cmd, num, p);
-                    p += Bin.Align(num * esz, 4);
+                    int elementCount = ((command >> 2) & 3) + 1, elementSize = command & 3;
+                    if (count == 0) count = 256;
+                    int elementBytes = elementSize == 3 ? 2 : elementCount * (4 >> elementSize);
+                    unpacked[immediate & 0x3FF] = (command, count, position);
+                    position += Bin.Align(count * elementBytes, 4);
                 }
-                else switch (cmd)
+                else switch (command)
                 {
                     case 0x14: case 0x15: case 0x17:   // MSCAL / MSCALF / MSCNT -> strip complete
-                        mesh.Strips.Add(BuildStrip(g, unpacked, mesh));
+                        mesh.Strips.Add(BuildStrip(guts, unpacked, mesh));
                         unpacked.Clear();
                         break;
-                    case 0x20: p += 4; break;                        // STMASK
-                    case 0x30: case 0x31: p += 16; break;            // STROW / STCOL
-                    case 0x4A: p += Bin.Align(num * 8, 4) ; break;   // MPG (not expected)
-                    case 0x50: case 0x51: p += (imm == 0 ? 65536 : imm) * 16; break; // DIRECT/DIRECTHL
+                    case 0x20: position += 4; break;                        // STMASK
+                    case 0x30: case 0x31: position += 16; break;            // STROW / STCOL
+                    case 0x4A: position += Bin.Align(count * 8, 4) ; break;   // MPG (not expected)
+                    case 0x50: case 0x51: position += (immediate == 0 ? 65536 : immediate) * 16; break; // DIRECT/DIRECTHL
                     case 0x00: case 0x01: case 0x02: case 0x03: case 0x04: case 0x05:
                     case 0x06: case 0x07: case 0x10: case 0x11: case 0x13:
                         break;
                     default:
-                        throw new InvalidDataException($"Unknown VIF command 0x{cmd:X2} at 0x{p - 4:X}");
+                        throw new InvalidDataException($"Unknown VIF command 0x{command:X2} at 0x{position - 4:X}");
                 }
             }
             return next;
         }
 
-        private static ModelStrip BuildStrip(Bin g, Dictionary<int, (int cmd, int num, int at)> u, ModelMesh mesh)
+        private static ModelStrip BuildStrip(Bin guts, Dictionary<int, (int cmd, int num, int at)> unpacked, ModelMesh mesh)
         {
-            var s = new ModelStrip();
-            if (!u.TryGetValue(2, out var pos)) return s;
-            if (u.TryGetValue(0, out var hdr) && hdr.cmd == 0x6C) s.HeaderFlags = g.U32(hdr.at + 12);
-            int n = pos.num;
-            for (int i = 0; i < n; i++)
+            var strip = new ModelStrip();
+            if (!unpacked.TryGetValue(2, out var pos)) return strip;
+            if (unpacked.TryGetValue(0, out var header) && header.cmd == 0x6C) strip.HeaderFlags = guts.U32(header.at + 12);
+            int vertexCount = pos.num;
+            for (int index = 0; index < vertexCount; index++)
             {
-                var v = new ModelVertex();
+                var vertex = new ModelVertex();
                 if (pos.cmd == 0x68 || pos.cmd == 0x6C)
                 {
                     int stride = pos.cmd == 0x6C ? 16 : 12;
-                    int o = pos.at + i * stride;
-                    v.Position = new Vector3(g.F32(o), g.F32(o + 4), g.F32(o + 8));
+                    int offset = pos.at + index * stride;
+                    vertex.Position = new Vector3(guts.F32(offset), guts.F32(offset + 4), guts.F32(offset + 8));
                 }
-                s.Vertices.Add(v);
+                strip.Vertices.Add(vertex);
             }
-            if (u.TryGetValue(3, out var nrm))
+            if (unpacked.TryGetValue(3, out var normals))
             {
-                for (int i = 0; i < Math.Min(n, nrm.num); i++)
+                for (int index = 0; index < Math.Min(vertexCount, normals.num); index++)
                 {
-                    var v = s.Vertices[i];
-                    if (nrm.cmd == 0x6A)        // V3-8
+                    var vertex = strip.Vertices[index];
+                    if (normals.cmd == 0x6A)        // V3-8
                     {
-                        int o = nrm.at + i * 3;
-                        v.Normal = new Vector3(g.S8(o), g.S8(o + 1), g.S8(o + 2)) / 127f;
+                        int offset = normals.at + index * 3;
+                        vertex.Normal = new Vector3(guts.S8(offset), guts.S8(offset + 1), guts.S8(offset + 2)) / 127f;
                     }
-                    else if (nrm.cmd == 0x6E)   // V4-8 : normal + bone0<<1
+                    else if (normals.cmd == 0x6E)   // V4-8 : normal + bone0<<1
                     {
-                        int o = nrm.at + i * 4;
-                        v.Normal = new Vector3(g.S8(o), g.S8(o + 1), g.S8(o + 2)) / 127f;
-                        v.Node0 = v.Bone0 = (byte)(g.U8(o + 3) >> 1);
-                        s.Skinned = true;
+                        int offset = normals.at + index * 4;
+                        vertex.Normal = new Vector3(guts.S8(offset), guts.S8(offset + 1), guts.S8(offset + 2)) / 127f;
+                        vertex.Node0 = vertex.Bone0 = (byte)(guts.U8(offset + 3) >> 1);
+                        strip.Skinned = true;
                         mesh.Skinned = true;
                     }
                 }
             }
-            if (u.TryGetValue(4, out var uv))
+            if (unpacked.TryGetValue(4, out var uv))
             {
-                for (int i = 0; i < Math.Min(n, uv.num); i++)
+                for (int index = 0; index < Math.Min(vertexCount, uv.num); index++)
                 {
-                    var v = s.Vertices[i];
+                    var vertex = strip.Vertices[index];
                     if (uv.cmd == 0x65)         // V2-16
                     {
-                        int o = uv.at + i * 4;
-                        v.UV = new Vector2(g.S16(o), g.S16(o + 2)) / 4096f;
+                        int offset = uv.at + index * 4;
+                        vertex.UV = new Vector2(guts.S16(offset), guts.S16(offset + 2)) / 4096f;
                     }
                     else if (uv.cmd == 0x6D)    // V4-16 : uv, weight, bone1<<2
                     {
-                        int o = uv.at + i * 8;
-                        v.UV = new Vector2(g.S16(o), g.S16(o + 2)) / 4096f;
-                        v.Weight0 = Math.Clamp(g.S16(o + 4) / 4096f, 0f, 1f);
-                        v.Node1 = v.Bone1 = (byte)(g.U16(o + 6) >> 2);
+                        int offset = uv.at + index * 8;
+                        vertex.UV = new Vector2(guts.S16(offset), guts.S16(offset + 2)) / 4096f;
+                        vertex.Weight0 = Math.Clamp(guts.S16(offset + 4) / 4096f, 0f, 1f);
+                        vertex.Node1 = vertex.Bone1 = (byte)(guts.U16(offset + 6) >> 2);
                     }
                 }
             }
-            if (u.TryGetValue(5, out var col) && col.cmd == 0x6E)
+            if (unpacked.TryGetValue(5, out var colors) && colors.cmd == 0x6E)
             {
-                for (int i = 0; i < Math.Min(n, col.num); i++)
+                for (int index = 0; index < Math.Min(vertexCount, colors.num); index++)
                 {
-                    int o = col.at + i * 4;
-                    s.Vertices[i].Color = new Vector4(g.U8(o), g.U8(o + 1), g.U8(o + 2), g.U8(o + 3)) / 128f;
+                    int offset = colors.at + index * 4;
+                    strip.Vertices[index].Color = new Vector4(guts.U8(offset), guts.U8(offset + 1), guts.U8(offset + 2), guts.U8(offset + 3)) / 128f;
                 }
             }
-            return s;
+            return strip;
         }
 
         /// <summary>Total triangle count across all strips.</summary>
-        public int TriangleCount => Meshes.Sum(m => m.Strips.Sum(s => Math.Max(0, s.Vertices.Count - 2)));
-        public int VertexCount => Meshes.Sum(m => m.Strips.Sum(s => s.Vertices.Count));
+        public int TriangleCount => Meshes.Sum(mesh => mesh.Strips.Sum(strip => Math.Max(0, strip.Vertices.Count - 2)));
+        public int VertexCount => Meshes.Sum(mesh => mesh.Strips.Sum(strip => strip.Vertices.Count));
     }
 }

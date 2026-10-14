@@ -5,7 +5,7 @@ namespace Mk2.Formats
 {
     public struct CollisionTri
     {
-        public int A, B, C;
+        public int First, Second, Third;
         public ushort Flags;            // low byte = material index, high byte = surface/edge flags
         public byte[] Extra;            // 6 unknown bytes per triangle (edge data?)
         public int Material => Flags & 0xFF;
@@ -37,21 +37,21 @@ namespace Mk2.Formats
         public List<CollisionTri> Triangles = new();     // de-duplicated
         public List<string> Materials = new();
 
-        public static Collision Load(byte[] d, string name = null)
+        public static Collision Load(byte[] data, string name = null)
         {
-            var b = new Bin(d);
-            int ver = b.S32(0);
-            if (ver < 0 || ver > 0xFFFF) b = new Bin(d, true);
-            var c = new Collision { Name = name };
-            c.CellsX = b.S32(4); c.CellsY = b.S32(8); c.CellsZ = b.S32(12);
-            c.CellSize = new Vector3(b.F32(0x10), b.F32(0x14), b.F32(0x18));
-            c.BoundsMin = new Vector3(b.F32(0x20), b.F32(0x24), b.F32(0x28));
-            c.BoundsMax = new Vector3(b.F32(0x30), b.F32(0x34), b.F32(0x38));
-            int matCount = b.S32(0x40);
-            int vtxSize = b.S32(0x44);
-            int cellSize = b.S32(0xC8);
-            int triSize = b.S32(0xCC);
-            int cells = c.CellsX * c.CellsY * c.CellsZ;
+            var reader = new Bin(data);
+            int version = reader.S32(0);
+            if (version < 0 || version > 0xFFFF) reader = new Bin(data, true);
+            var collision = new Collision { Name = name };
+            collision.CellsX = reader.S32(4); collision.CellsY = reader.S32(8); collision.CellsZ = reader.S32(12);
+            collision.CellSize = new Vector3(reader.F32(0x10), reader.F32(0x14), reader.F32(0x18));
+            collision.BoundsMin = new Vector3(reader.F32(0x20), reader.F32(0x24), reader.F32(0x28));
+            collision.BoundsMax = new Vector3(reader.F32(0x30), reader.F32(0x34), reader.F32(0x38));
+            int matCount = reader.S32(0x40);
+            int vtxSize = reader.S32(0x44);
+            int cellSize = reader.S32(0xC8);
+            int triSize = reader.S32(0xCC);
+            int cells = collision.CellsX * collision.CellsY * collision.CellsZ;
             if (cells <= 0 || cells > 1_000_000) throw new InvalidDataException("Bad collision grid size");
 
             int cellOff = 0xD0;
@@ -60,45 +60,45 @@ namespace Mk2.Formats
             int matOff = vtxOff + vtxSize;
             int vtxCount = vtxSize / 16;
             int triCount = 0;
-            for (int i = 0; i < cells; i++)
-                triCount = Math.Max(triCount, b.U16(cellOff + i * 4) + b.U16(cellOff + i * 4 + 2));
+            for (int index = 0; index < cells; index++)
+                triCount = Math.Max(triCount, reader.U16(cellOff + index * 4) + reader.U16(cellOff + index * 4 + 2));
             triCount = Math.Min(triCount, triSize / 14);
 
-            for (int i = 0; i < vtxCount; i++)
+            for (int index = 0; index < vtxCount; index++)
             {
-                int o = vtxOff + i * 16;
-                c.Vertices.Add(new Vector3(b.F32(o), b.F32(o + 4), b.F32(o + 8)));
-                c.VertexColors.Add(b.U32(o + 12));
+                int offset = vtxOff + index * 16;
+                collision.Vertices.Add(new Vector3(reader.F32(offset), reader.F32(offset + 4), reader.F32(offset + 8)));
+                collision.VertexColors.Add(reader.U32(offset + 12));
             }
             var seen = new HashSet<(int, int, int)>();
-            for (int i = 0; i < triCount; i++)
+            for (int index = 0; index < triCount; index++)
             {
-                int o = triOff + i * 14;
-                var t = new CollisionTri
+                int offset = triOff + index * 14;
+                var triangle = new CollisionTri
                 {
-                    Extra = d.AsSpan(o, 6).ToArray(),
-                    A = b.U16(o + 6), B = b.U16(o + 8), C = b.U16(o + 10),
-                    Flags = b.U16(o + 12),
+                    Extra = data.AsSpan(offset, 6).ToArray(),
+                    First = reader.U16(offset + 6), Second = reader.U16(offset + 8), Third = reader.U16(offset + 10),
+                    Flags = reader.U16(offset + 12),
                 };
-                if (t.A >= vtxCount || t.B >= vtxCount || t.C >= vtxCount) continue;
-                var key = Sort(t.A, t.B, t.C);
+                if (triangle.First >= vtxCount || triangle.Second >= vtxCount || triangle.Third >= vtxCount) continue;
+                var key = Sort(triangle.First, triangle.Second, triangle.Third);
                 if (!seen.Add(key)) continue;
-                c.Triangles.Add(t);
+                collision.Triangles.Add(triangle);
             }
-            for (int i = 0; i < matCount && matOff + i * 32 < d.Length; i++)
-                c.Materials.Add(b.FixedStr(matOff + i * 32, 32));
-            return c;
+            for (int index = 0; index < matCount && matOff + index * 32 < data.Length; index++)
+                collision.Materials.Add(reader.FixedStr(matOff + index * 32, 32));
+            return collision;
         }
 
-        private static (int, int, int) Sort(int a, int b, int c)
+        private static (int, int, int) Sort(int first, int second, int third)
         {
-            if (a > b) (a, b) = (b, a);
-            if (b > c) (b, c) = (c, b);
-            if (a > b) (a, b) = (b, a);
-            return (a, b, c);
+            if (first > second) (first, second) = (second, first);
+            if (second > third) (second, third) = (third, second);
+            if (first > second) (first, second) = (second, first);
+            return (first, second, third);
         }
 
-        public string MaterialName(CollisionTri t) =>
-            t.Material < Materials.Count ? Materials[t.Material] : $"#{t.Material}";
+        public string MaterialName(CollisionTri triangle) =>
+            triangle.Material < Materials.Count ? Materials[triangle.Material] : $"#{triangle.Material}";
     }
 }

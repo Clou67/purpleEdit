@@ -31,49 +31,49 @@ namespace Mk2.Game
         public BniNode Node;
         public override string ToString() => Name;
 
-        public ChunkDef Env => Chunks.FirstOrDefault(c => c.IsEnvironment);
+        public ChunkDef Env => Chunks.FirstOrDefault(chunkDef => chunkDef.IsEnvironment);
     }
 
     /// <summary>levels.ini.bni: levels -> chunks -> overlays/grounds.</summary>
     public static class LevelsIni
     {
-        public static List<LevelDef> Parse(BniFile f)
+        public static List<LevelDef> Parse(BniFile bniFile)
         {
             var levels = new List<LevelDef>();
-            foreach (var n in f.Roots)
+            foreach (var node in bniFile.Roots)
             {
-                if (!string.Equals(n.Key, "level", StringComparison.OrdinalIgnoreCase)) continue;
-                var lv = new LevelDef { Name = n.Value, Node = n };
-                lv.StartChunk = n.Get("startChunk");
-                lv.EnvChunk = n.Get("envChunk");
-                var fp = n.Child("fogPlanes");
-                if (fp != null && fp.Values.Count >= 2) { lv.FogNear = Bni.ParseFloat(fp.Values[0]); lv.FogFar = Bni.ParseFloat(fp.Values[1]); }
-                var fc = n.Child("fogCol");
-                if (fc != null && fc.Values.Count >= 3) lv.FogColor = fc.Values.Take(3).Select(v => Bni.ParseFloat(v)).ToArray();
-                foreach (var c in n.ChildrenNamed("chunk"))
+                if (!string.Equals(node.Key, "level", StringComparison.OrdinalIgnoreCase)) continue;
+                var level = new LevelDef { Name = node.Value, Node = node };
+                level.StartChunk = node.Get("startChunk");
+                level.EnvChunk = node.Get("envChunk");
+                var fogPlanes = node.Child("fogPlanes");
+                if (fogPlanes != null && fogPlanes.Values.Count >= 2) { level.FogNear = Bni.ParseFloat(fogPlanes.Values[0]); level.FogFar = Bni.ParseFloat(fogPlanes.Values[1]); }
+                var fogColor = node.Child("fogCol");
+                if (fogColor != null && fogColor.Values.Count >= 3) level.FogColor = fogColor.Values.Take(3).Select(value => Bni.ParseFloat(value)).ToArray();
+                foreach (var chunkNode in node.ChildrenNamed("chunk"))
                 {
-                    var ch = new ChunkDef { Name = c.Value, Node = c };
-                    ch.IsEnvironment = string.Equals(ch.Name, lv.EnvChunk, StringComparison.OrdinalIgnoreCase);
-                    foreach (var k in c.Children)
+                    var chunk = new ChunkDef { Name = chunkNode.Value, Node = chunkNode };
+                    chunk.IsEnvironment = string.Equals(chunk.Name, level.EnvChunk, StringComparison.OrdinalIgnoreCase);
+                    foreach (var child in chunkNode.Children)
                     {
-                        switch (k.Key?.ToLowerInvariant())
+                        switch (child.Key?.ToLowerInvariant())
                         {
                             case "overlay":
-                                if (k.Value != null) ch.Overlays.Add(new OverlayRef { Name = k.Value, Flag = k.Values.Count > 1 ? k.Values[1] : null });
+                                if (child.Value != null) chunk.Overlays.Add(new OverlayRef { Name = child.Value, Flag = child.Values.Count > 1 ? child.Values[1] : null });
                                 break;
                             case "ground":
-                                if (k.Value != null) ch.Grounds.Add(k.Value);
+                                if (child.Value != null) chunk.Grounds.Add(child.Value);
                                 break;
                             case "envdome":
-                                ch.EnvDome = k.Value;
+                                chunk.EnvDome = child.Value;
                                 break;
                         }
                     }
-                    lv.Chunks.Add(ch);
+                    level.Chunks.Add(chunk);
                 }
                 // Environment chunk first so shared assets are available to the others.
-                lv.Chunks.Sort((a, b) => (b.IsEnvironment ? 1 : 0) - (a.IsEnvironment ? 1 : 0));
-                levels.Add(lv);
+                level.Chunks.Sort((first, second) => (second.IsEnvironment ? 1 : 0) - (first.IsEnvironment ? 1 : 0));
+                levels.Add(level);
             }
             return levels;
         }

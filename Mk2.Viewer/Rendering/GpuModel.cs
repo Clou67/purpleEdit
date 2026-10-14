@@ -50,61 +50,61 @@ namespace Mk2.Viewer.Rendering
         public bool Animatable;
 
         /// <summary>Uploads a model. Passing an animation keeps the skin data needed by <see cref="ApplySkin"/>.</summary>
-        public static GpuModel Build(LoadedModel lm, TextureCache textures, Animation animation = null)
+        public static GpuModel Build(LoadedModel loadedModel, TextureCache textures, Animation animation = null)
         {
             bool animatable = animation != null;
-            var g = new GpuModel { Source = lm, Animatable = animatable };
-            var model = lm.Model;
+            var gpuModel = new GpuModel { Source = loadedModel, Animatable = animatable };
+            var model = loadedModel.Model;
             var min = new Vector3(float.MaxValue);
             var max = new Vector3(float.MinValue);
-            var groups = model.Meshes.GroupBy(m => (m.ComponentIndex, m.MaterialIndex));
-            foreach (var grp in groups)
+            var groups = model.Meshes.GroupBy(mesh => (mesh.ComponentIndex, mesh.MaterialIndex));
+            foreach (var group in groups)
             {
-                var verts = new List<ModelVertex>();
-                var idx = new List<int>();
-                foreach (var mesh in grp) mesh.Triangulate(verts, idx);
-                if (idx.Count == 0) continue;
-                var comp = model.Components[grp.Key.ComponentIndex];
-                var mat = grp.Key.MaterialIndex < lm.Materials.Count ? lm.Materials[grp.Key.MaterialIndex]
-                        : Material.Default(model.MaterialNames.ElementAtOrDefault(grp.Key.MaterialIndex) ?? "?");
-                var data = new float[verts.Count * GpuMesh.Stride];
-                for (int i = 0; i < verts.Count; i++)
+                var vertices = new List<ModelVertex>();
+                var indices = new List<int>();
+                foreach (var mesh in group) mesh.Triangulate(vertices, indices);
+                if (indices.Count == 0) continue;
+                var comp = model.Components[group.Key.ComponentIndex];
+                var material = group.Key.MaterialIndex < loadedModel.Materials.Count ? loadedModel.Materials[group.Key.MaterialIndex]
+                        : Material.Default(model.MaterialNames.ElementAtOrDefault(group.Key.MaterialIndex) ?? "?");
+                var data = new float[vertices.Count * GpuMesh.Stride];
+                for (int index = 0; index < vertices.Count; index++)
                 {
-                    var v = verts[i];
-                    int o = i * GpuMesh.Stride;
-                    data[o] = v.Position.X; data[o + 1] = v.Position.Y; data[o + 2] = v.Position.Z;
-                    var n = v.Normal.LengthSquared() > 1e-6f ? Vector3.Normalize(v.Normal) : Vector3.UnitY;
-                    data[o + 3] = n.X; data[o + 4] = n.Y; data[o + 5] = n.Z;
-                    data[o + 6] = v.UV.X; data[o + 7] = v.UV.Y;
-                    data[o + 8] = v.Color.X; data[o + 9] = v.Color.Y; data[o + 10] = v.Color.Z; data[o + 11] = v.Color.W;
+                    var vertex = vertices[index];
+                    int offset = index * GpuMesh.Stride;
+                    data[offset] = vertex.Position.X; data[offset + 1] = vertex.Position.Y; data[offset + 2] = vertex.Position.Z;
+                    var normal = vertex.Normal.LengthSquared() > 1e-6f ? Vector3.Normalize(vertex.Normal) : Vector3.UnitY;
+                    data[offset + 3] = normal.X; data[offset + 4] = normal.Y; data[offset + 5] = normal.Z;
+                    data[offset + 6] = vertex.UV.X; data[offset + 7] = vertex.UV.Y;
+                    data[offset + 8] = vertex.Color.X; data[offset + 9] = vertex.Color.Y; data[offset + 10] = vertex.Color.Z; data[offset + 11] = vertex.Color.W;
                     if (!comp.IsCollision)
                     {
-                        min = Vector3.Min(min, v.Position);
-                        max = Vector3.Max(max, v.Position);
+                        min = Vector3.Min(min, vertex.Position);
+                        max = Vector3.Max(max, vertex.Position);
                     }
                 }
                 SkinSource skin = null;
-                if (animatable) skin = BuildSkin(model, comp, grp, data, animation);
-                var tex = textures.Get(mat.TextureName);
+                if (animatable) skin = BuildSkin(model, comp, group, data, animation);
+                var textureInfo = textures.Get(material.TextureName);
                 var part = new GpuPart
                 {
-                    Mesh = GpuMesh.Create(data, idx.Select(i => (uint)i).ToArray(), dynamic: animatable),
+                    Mesh = GpuMesh.Create(data, indices.Select(index => (uint)index).ToArray(), dynamic: animatable),
                     Skin = skin,
-                    Material = mat,
-                    Texture = tex.Id,
-                    TextureHasAlpha = tex.HasAlpha,
-                    TextureIsCutout = tex.Cutout,
-                    VertexAlpha = verts.Any(vertex => vertex.Color.W < 0.95f),
+                    Material = material,
+                    Texture = textureInfo.Id,
+                    TextureHasAlpha = textureInfo.HasAlpha,
+                    TextureIsCutout = textureInfo.Cutout,
+                    VertexAlpha = vertices.Any(vertex => vertex.Color.W < 0.95f),
                     IsCollisionComponent = comp.IsCollision,
                     IsFragment = comp.IsFragment,
                     ComponentName = comp.Name,
-                    Triangles = idx.Count / 3,
+                    Triangles = indices.Count / 3,
                 };
-                g.Parts.Add(part);
+                gpuModel.Parts.Add(part);
             }
-            if (min.X <= max.X) { g.Min = min; g.Max = max; g.HasBounds = true; }
-            else { g.Min = model.BoundsMin; g.Max = model.BoundsMax; g.HasBounds = true; }
-            return g;
+            if (min.X <= max.X) { gpuModel.Min = min; gpuModel.Max = max; gpuModel.HasBounds = true; }
+            else { gpuModel.Min = model.BoundsMin; gpuModel.Max = model.BoundsMax; gpuModel.HasBounds = true; }
+            return gpuModel;
         }
 
         private static SkinSource BuildSkin(Model model, ModelComponent component, IEnumerable<ModelMesh> meshes, float[] data, Animation animation)
@@ -187,7 +187,7 @@ namespace Mk2.Viewer.Rendering
 
         public void Dispose()
         {
-            foreach (var p in Parts) p.Mesh.Dispose();
+            foreach (var part in Parts) part.Mesh.Dispose();
             Parts.Clear();
         }
     }
@@ -202,50 +202,50 @@ namespace Mk2.Viewer.Rendering
     /// <summary>GL textures keyed by texture name, decoded through the scene's AssetCache.</summary>
     public sealed class TextureCache : IDisposable
     {
-        private readonly Dictionary<string, TexInfo> _tex = new Dictionary<string, TexInfo>(StringComparer.OrdinalIgnoreCase);
-        private readonly AssetCache _assets;
-        private TexInfo _missing;
+        private readonly Dictionary<string, TexInfo> textures = new Dictionary<string, TexInfo>(StringComparer.OrdinalIgnoreCase);
+        private readonly AssetCache assetCache;
+        private TexInfo missing;
 
-        public TextureCache(AssetCache assets) { _assets = assets; }
+        public TextureCache(AssetCache assets) { assetCache = assets; }
 
-        public int Count => _tex.Count;
+        public int Count => textures.Count;
 
         public TexInfo Get(string name)
         {
             if (string.IsNullOrEmpty(name)) return Missing();
-            if (_tex.TryGetValue(name, out var t)) return t;
-            var src = _assets.GetTexture(name);
-            t = src == null ? Missing() : Upload(src);
-            _tex[name] = t;
-            return t;
+            if (textures.TryGetValue(name, out var textureInfo)) return textureInfo;
+            var texture = assetCache.GetTexture(name);
+            textureInfo = texture == null ? Missing() : Upload(texture);
+            textures[name] = textureInfo;
+            return textureInfo;
         }
 
         private TexInfo Missing()
         {
-            if (_missing.Id == 0) _missing = Upload(Texture.Missing());
-            return _missing;
+            if (missing.Id == 0) missing = Upload(Texture.Missing());
+            return missing;
         }
 
-        public static TexInfo Upload(Texture t)
+        public static TexInfo Upload(Texture texture)
         {
             int id = GL.GenTexture();
             GL.BindTexture(TextureTarget.Texture2D, id);
-            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, t.Width, t.Height, 0,
-                          PixelFormat.Rgba, PixelType.UnsignedByte, t.Rgba);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, texture.Width, texture.Height, 0,
+                          PixelFormat.Rgba, PixelType.UnsignedByte, texture.Rgba);
             GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
-            return new TexInfo { Id = id, HasAlpha = t.HasAlpha, Cutout = t.HasCutout };
+            return new TexInfo { Id = id, HasAlpha = texture.HasAlpha, Cutout = texture.HasCutout };
         }
 
         public void Dispose()
         {
-            foreach (var t in _tex.Values.Select(v => v.Id).Distinct()) if (t != 0) GL.DeleteTexture(t);
-            if (_missing.Id != 0) GL.DeleteTexture(_missing.Id);
-            _tex.Clear();
-            _missing = default;
+            foreach (var textureId in textures.Values.Select(textureInfo => textureInfo.Id).Distinct()) if (textureId != 0) GL.DeleteTexture(textureId);
+            if (missing.Id != 0) GL.DeleteTexture(missing.Id);
+            textures.Clear();
+            missing = default;
         }
     }
 }

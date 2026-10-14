@@ -113,8 +113,8 @@ namespace Mk2.Viewer.Utils
             process.StartInfo.UseShellExecute = false;
             process.StartInfo.RedirectStandardOutput = true;
             process.StartInfo.RedirectStandardError = true;
-            foreach (string arg in args)
-                process.StartInfo.ArgumentList.Add(arg);
+            foreach (string argument in args)
+                process.StartInfo.ArgumentList.Add(argument);
 
             process.Start();
             string output = process.StandardOutput.ReadToEnd();
@@ -132,8 +132,8 @@ namespace Mk2.Viewer.Utils
             {
                 var zArgs = new List<string>();
                 if (args != null)
-                    foreach (string arg in args)
-                        zArgs.Add("--" + arg);
+                    foreach (string argument in args)
+                        zArgs.Add("--" + argument);
 
                 if (kwargs != null)
                     foreach (var entry in kwargs)
@@ -152,7 +152,7 @@ namespace Mk2.Viewer.Utils
             {
                 var result = RunKDialog(new List<string> { "getopenfilename", "multiple" },
                     new Dictionary<string, string> { { "title", title } });
-                return result.Split(' ').Where(s => s.Length > 0).ToList();
+                return result.Split(' ').Where(path => path.Length > 0).ToList();
             }
 
             public static string SaveFile(string title) =>
@@ -170,8 +170,8 @@ namespace Mk2.Viewer.Utils
             {
                 var zArgs = new List<string>();
                 if (args != null)
-                    foreach (string arg in args)
-                        zArgs.Add("--" + arg);
+                    foreach (string argument in args)
+                        zArgs.Add("--" + argument);
 
                 if (kwargs != null)
                     foreach (var entry in kwargs)
@@ -187,7 +187,7 @@ namespace Mk2.Viewer.Utils
             {
                 var result = RunZenity(new List<string> { "file-selection", "multiple" },
                     new Dictionary<string, string> { { "title", title } });
-                return result.Split("|").Where(s => s.Length > 0).ToList();
+                return result.Split("|").Where(path => path.Length > 0).ToList();
             }
 
             public static string SaveFile(string title) =>
@@ -221,7 +221,7 @@ namespace Mk2.Viewer.Utils
                     "  set out to out & POSIX path of f & \"\\n\"\n" +
                     "end repeat\n" +
                     "return out");
-                return raw.Split('\n').Where(s => s.Length > 0).ToList();
+                return raw.Split('\n').Where(path => path.Length > 0).ToList();
             }
 
             public static string SaveFile(string title) =>
@@ -230,9 +230,9 @@ namespace Mk2.Viewer.Utils
             public static string OpenFolder(string title) =>
                 PosixPath(RunOsaScript($"POSIX path of (choose folder with prompt \"{Escape(title)}\")"));
 
-            private static string Escape(string s) => s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+            private static string Escape(string text) => text.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
-            private static string PosixPath(string s) => s.TrimEnd('/');
+            private static string PosixPath(string path) => path.TrimEnd('/');
         }
 
         // ---------------------------------------------------------------- Windows: native IFileDialog (no WinForms)
@@ -275,7 +275,7 @@ namespace Mk2.Viewer.Utils
                 void GetResult(out IShellItem ppsi);
                 void AddPlace(IShellItem psi, uint fdap);
                 void SetDefaultExtension([MarshalAs(UnmanagedType.LPWStr)] string pszDefaultExtension);
-                void Close(int hr);
+                void Close(int result);
                 void SetClientGuid(ref Guid guid);
                 void ClearClientData();
                 void SetFilter(IntPtr pFilter);
@@ -332,9 +332,9 @@ namespace Mk2.Viewer.Utils
 
             private static string GetPath(IShellItem item)
             {
-                item.GetDisplayName(SIGDN_FILESYSPATH, out var ptr);
-                var path = Marshal.PtrToStringUni(ptr);
-                Marshal.FreeCoTaskMem(ptr);
+                item.GetDisplayName(SIGDN_FILESYSPATH, out var pathPointer);
+                var path = Marshal.PtrToStringUni(pathPointer);
+                Marshal.FreeCoTaskMem(pathPointer);
                 return path;
             }
 
@@ -372,9 +372,9 @@ namespace Mk2.Viewer.Utils
                     dialog.GetResults(out var items);
                     items.GetCount(out var count);
                     var result = new List<string>();
-                    for (uint i = 0; i < count; i++)
+                    for (uint index = 0; index < count; index++)
                     {
-                        items.GetItemAt(i, out var item);
+                        items.GetItemAt(index, out var item);
                         result.Add(GetPath(item));
                     }
                     return result;

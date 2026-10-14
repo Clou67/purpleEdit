@@ -8,24 +8,24 @@ namespace Mk2.Viewer.Rendering
     /// <summary>Small helpers around raw GL objects. All math uses System.Numerics (row-vector convention).</summary>
     public static class GlUtil
     {
-        private static readonly float[] _matBuf = new float[16];
+        private static readonly float[] matrixBuffer = new float[16];
 
-        public static void SetMatrix(int location, Matrix4x4 m)
+        public static void SetMatrix(int location, Matrix4x4 matrix)
         {
             if (location < 0) return;
-            var a = _matBuf;
-            a[0] = m.M11; a[1] = m.M12; a[2] = m.M13; a[3] = m.M14;
-            a[4] = m.M21; a[5] = m.M22; a[6] = m.M23; a[7] = m.M24;
-            a[8] = m.M31; a[9] = m.M32; a[10] = m.M33; a[11] = m.M34;
-            a[12] = m.M41; a[13] = m.M42; a[14] = m.M43; a[15] = m.M44;
-            GL.UniformMatrix4(location, 1, false, a);
+            var buffer = matrixBuffer;
+            buffer[0] = matrix.M11; buffer[1] = matrix.M12; buffer[2] = matrix.M13; buffer[3] = matrix.M14;
+            buffer[4] = matrix.M21; buffer[5] = matrix.M22; buffer[6] = matrix.M23; buffer[7] = matrix.M24;
+            buffer[8] = matrix.M31; buffer[9] = matrix.M32; buffer[10] = matrix.M33; buffer[11] = matrix.M34;
+            buffer[12] = matrix.M41; buffer[13] = matrix.M42; buffer[14] = matrix.M43; buffer[15] = matrix.M44;
+            GL.UniformMatrix4(location, 1, false, buffer);
         }
         public static Matrix4x4 Perspective(float fovY, float aspect, float near, float far)
         {
-            float f = 1f / MathF.Tan(fovY / 2f);
+            float focal = 1f / MathF.Tan(fovY / 2f);
             return new Matrix4x4(
-                f / aspect, 0, 0, 0,
-                0, f, 0, 0,
+                focal / aspect, 0, 0, 0,
+                0, focal, 0, 0,
                 0, 0, (far + near) / (near - far), -1,
                 0, 0, 2 * far * near / (near - far), 0);
         }
@@ -34,74 +34,74 @@ namespace Mk2.Viewer.Rendering
     public sealed class ShaderProgram : IDisposable
     {
         public int Handle { get; private set; }
-        private readonly Dictionary<string, int> _locations = new Dictionary<string, int>();
+        private readonly Dictionary<string, int> locations = new Dictionary<string, int>();
 
-        public ShaderProgram(string vs, string fs)
+        public ShaderProgram(string vertexSource, string fragmentSource)
         {
-            int v = Compile(ShaderType.VertexShader, vs);
-            int f = Compile(ShaderType.FragmentShader, fs);
+            int vertexShader = Compile(ShaderType.VertexShader, vertexSource);
+            int fragmentShader = Compile(ShaderType.FragmentShader, fragmentSource);
             Handle = GL.CreateProgram();
-            GL.AttachShader(Handle, v);
-            GL.AttachShader(Handle, f);
+            GL.AttachShader(Handle, vertexShader);
+            GL.AttachShader(Handle, fragmentShader);
             GL.LinkProgram(Handle);
             GL.GetProgram(Handle, GetProgramParameterName.LinkStatus, out int ok);
             if (ok == 0) throw new Exception("Shader link failed: " + GL.GetProgramInfoLog(Handle));
-            GL.DetachShader(Handle, v);
-            GL.DetachShader(Handle, f);
-            GL.DeleteShader(v);
-            GL.DeleteShader(f);
+            GL.DetachShader(Handle, vertexShader);
+            GL.DetachShader(Handle, fragmentShader);
+            GL.DeleteShader(vertexShader);
+            GL.DeleteShader(fragmentShader);
         }
 
-        private static int Compile(ShaderType type, string src)
+        private static int Compile(ShaderType type, string source)
         {
-            int s = GL.CreateShader(type);
-            GL.ShaderSource(s, src);
-            GL.CompileShader(s);
-            GL.GetShader(s, ShaderParameter.CompileStatus, out int ok);
-            if (ok == 0) throw new Exception(type + " compile failed: " + GL.GetShaderInfoLog(s));
-            return s;
+            int shader = GL.CreateShader(type);
+            GL.ShaderSource(shader, source);
+            GL.CompileShader(shader);
+            GL.GetShader(shader, ShaderParameter.CompileStatus, out int ok);
+            if (ok == 0) throw new Exception(type + " compile failed: " + GL.GetShaderInfoLog(shader));
+            return shader;
         }
 
         public void Use() => GL.UseProgram(Handle);
 
         public int Loc(string name)
         {
-            if (!_locations.TryGetValue(name, out int l))
+            if (!locations.TryGetValue(name, out int location))
             {
-                l = GL.GetUniformLocation(Handle, name);
-                _locations[name] = l;
+                location = GL.GetUniformLocation(Handle, name);
+                locations[name] = location;
             }
-            return l;
+            return location;
         }
 
         // Last value uploaded per uniform location; skips redundant GL calls (big win with thousands of draws).
-        private readonly Dictionary<int, Vector4> _cache = new Dictionary<int, Vector4>();
-        private readonly Dictionary<int, Matrix4x4> _matCache = new Dictionary<int, Matrix4x4>();
+        private readonly Dictionary<int, Vector4> cache = new Dictionary<int, Vector4>();
+        private readonly Dictionary<int, Matrix4x4> matrixCache = new Dictionary<int, Matrix4x4>();
 
-        private bool Changed(int l, Vector4 v)
+        private bool Changed(int location, Vector4 value)
         {
-            if (_cache.TryGetValue(l, out var old) && old == v) return false;
-            _cache[l] = v;
+            if (cache.TryGetValue(location, out var old) && old == value) return false;
+            cache[location] = value;
             return true;
         }
 
         /// <summary>Forget cached values (call after the program is re-linked or another program changed state).</summary>
-        public void ResetCache() { _cache.Clear(); _matCache.Clear(); }
+        public void ResetCache() { cache.Clear(); matrixCache.Clear(); }
 
-        public void Set(string name, Matrix4x4 m)
+        public void Set(string name, Matrix4x4 matrix)
         {
-            int l = Loc(name);
-            if (l < 0) return;
-            if (_matCache.TryGetValue(l, out var old) && old == m) return;
-            _matCache[l] = m;
-            GlUtil.SetMatrix(l, m);
+            int location = Loc(name);
+            if (location < 0) return;
+            if (matrixCache.TryGetValue(location, out var old) && old == matrix) return;
+            matrixCache[location] = matrix;
+            GlUtil.SetMatrix(location, matrix);
         }
-        public void Set(string name, float v) { int l = Loc(name); if (l >= 0 && Changed(l, new Vector4(v, 0, 0, 0))) GL.Uniform1(l, v); }
-        public void Set(string name, int v) { int l = Loc(name); if (l >= 0 && Changed(l, new Vector4(v, 0, 0, 1))) GL.Uniform1(l, v); }
-        public void Set(string name, bool v) => Set(name, v ? 1 : 0);
-        public void Set(string name, Vector2 v) { int l = Loc(name); if (l >= 0 && Changed(l, new Vector4(v.X, v.Y, 0, 0))) GL.Uniform2(l, v.X, v.Y); }
-        public void Set(string name, Vector3 v) { int l = Loc(name); if (l >= 0 && Changed(l, new Vector4(v, 0))) GL.Uniform3(l, v.X, v.Y, v.Z); }
-        public void Set(string name, Vector4 v) { int l = Loc(name); if (l >= 0 && Changed(l, v)) GL.Uniform4(l, v.X, v.Y, v.Z, v.W); }
+        public void Set(string name, float value) { int location = Loc(name); if (location >= 0 && Changed(location, new Vector4(value, 0, 0, 0))) GL.Uniform1(location, value); }
+        public void Set(string name, int value) { int location = Loc(name); if (location >= 0 && Changed(location, new Vector4(value, 0, 0, 1))) GL.Uniform1(location, value); }
+        public void Set(string name, bool value) => Set(name, value ? 1 : 0);
+        public void Set(string name, Vector2 value) { int location = Loc(name); if (location >= 0 && Changed(location, new Vector4(value.X, value.Y, 0, 0))) GL.Uniform2(location, value.X, value.Y); }
+        public void Set(string name, Vector3 value) { int location = Loc(name); if (location >= 0 && Changed(location, new Vector4(value, 0))) GL.Uniform3(location, value.X, value.Y, value.Z); }
+        public void Set(string name, Vector4 value) { int location = Loc(name); if (location >= 0 && Changed(location, value)) GL.Uniform4(location, value.X, value.Y, value.Z, value.W); }
 
         public void Dispose()
         {
@@ -118,15 +118,15 @@ namespace Mk2.Viewer.Rendering
 
         public static GpuMesh Create(float[] interleaved, uint[] indices, bool dynamic = false)
         {
-            var m = new GpuMesh { IndexCount = indices.Length };
-            m.Vao = GL.GenVertexArray();
-            GL.BindVertexArray(m.Vao);
-            m.Vbo = GL.GenBuffer();
-            GL.BindBuffer(BufferTarget.ArrayBuffer, m.Vbo);
+            var mesh = new GpuMesh { IndexCount = indices.Length };
+            mesh.Vao = GL.GenVertexArray();
+            GL.BindVertexArray(mesh.Vao);
+            mesh.Vbo = GL.GenBuffer();
+            GL.BindBuffer(BufferTarget.ArrayBuffer, mesh.Vbo);
             GL.BufferData(BufferTarget.ArrayBuffer, interleaved.Length * sizeof(float), interleaved,
                           dynamic ? BufferUsageHint.DynamicDraw : BufferUsageHint.StaticDraw);
-            m.Ebo = GL.GenBuffer();
-            GL.BindBuffer(BufferTarget.ElementArrayBuffer, m.Ebo);
+            mesh.Ebo = GL.GenBuffer();
+            GL.BindBuffer(BufferTarget.ElementArrayBuffer, mesh.Ebo);
             GL.BufferData(BufferTarget.ElementArrayBuffer, indices.Length * sizeof(uint), indices, BufferUsageHint.StaticDraw);
             int stride = Stride * sizeof(float);
             GL.EnableVertexAttribArray(0);
@@ -138,7 +138,7 @@ namespace Mk2.Viewer.Rendering
             GL.EnableVertexAttribArray(3);
             GL.VertexAttribPointer(3, 4, VertexAttribPointerType.Float, false, stride, 8 * sizeof(float));
             GL.BindVertexArray(0);
-            return m;
+            return mesh;
         }
 
         public void Draw()
@@ -173,20 +173,20 @@ namespace Mk2.Viewer.Rendering
 
         public static GpuLines Create(List<float> data, bool dynamic = false)
         {
-            var l = new GpuLines { VertexCount = data.Count / 7 };
-            l.Vao = GL.GenVertexArray();
-            GL.BindVertexArray(l.Vao);
-            l.Vbo = GL.GenBuffer();
-            GL.BindBuffer(BufferTarget.ArrayBuffer, l.Vbo);
-            var arr = data.ToArray();
-            GL.BufferData(BufferTarget.ArrayBuffer, arr.Length * sizeof(float), arr,
+            var lines = new GpuLines { VertexCount = data.Count / 7 };
+            lines.Vao = GL.GenVertexArray();
+            GL.BindVertexArray(lines.Vao);
+            lines.Vbo = GL.GenBuffer();
+            GL.BindBuffer(BufferTarget.ArrayBuffer, lines.Vbo);
+            var values = data.ToArray();
+            GL.BufferData(BufferTarget.ArrayBuffer, values.Length * sizeof(float), values,
                           dynamic ? BufferUsageHint.DynamicDraw : BufferUsageHint.StaticDraw);
             GL.EnableVertexAttribArray(0);
             GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 7 * sizeof(float), 0);
             GL.EnableVertexAttribArray(1);
             GL.VertexAttribPointer(1, 4, VertexAttribPointerType.Float, false, 7 * sizeof(float), 3 * sizeof(float));
             GL.BindVertexArray(0);
-            return l;
+            return lines;
         }
 
         public void Draw()
@@ -200,11 +200,11 @@ namespace Mk2.Viewer.Rendering
         public void Update(List<float> data)
         {
             if (Vbo == 0) return;
-            var arr = data.ToArray();
+            var values = data.ToArray();
             GL.BindBuffer(BufferTarget.ArrayBuffer, Vbo);
-            GL.BufferData(BufferTarget.ArrayBuffer, arr.Length * sizeof(float), arr, BufferUsageHint.DynamicDraw);
+            GL.BufferData(BufferTarget.ArrayBuffer, values.Length * sizeof(float), values, BufferUsageHint.DynamicDraw);
             GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
-            VertexCount = arr.Length / 7;
+            VertexCount = values.Length / 7;
         }
 
         public void Dispose()

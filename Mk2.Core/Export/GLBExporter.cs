@@ -17,19 +17,19 @@ namespace Mk2.Export
         public bool IncludeFragments = false;
         public bool IncludeGroundCollision = false;
 
-        private readonly AssetCache _assets;
-        private readonly MemoryStream _bin = new();
-        private readonly JsonArray _accessors = new(), _views = new(), _meshes = new(), _nodes = new(),
-            _materials = new(), _textures = new(), _images = new(), _rootNodes = new();
-        private readonly Dictionary<LoadedModel, int> _meshIndex = new();
-        private readonly Dictionary<string, int> _materialIndex = new(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, int> _textureIndex = new(StringComparer.OrdinalIgnoreCase);
+        private readonly AssetCache assetCache;
+        private readonly MemoryStream binary = new();
+        private readonly JsonArray accessors = new(), views = new(), meshes = new(), nodes = new(),
+            materials = new(), textures = new(), images = new(), rootNodes = new();
+        private readonly Dictionary<LoadedModel, int> meshIndices = new();
+        private readonly Dictionary<string, int> materialIndices = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, int> textureIndices = new(StringComparer.OrdinalIgnoreCase);
 
-        public GlbExporter(AssetCache assets) { _assets = assets; }
+        public GlbExporter(AssetCache assets) { assetCache = assets; }
 
-        public void AddModel(LoadedModel m, Matrix4x4 world, string nodeName, int? parent = null)
+        public void AddModel(LoadedModel loadedModel, Matrix4x4 world, string nodeName, int? parent = null)
         {
-            int mesh = MeshFor(m);
+            int mesh = MeshFor(loadedModel);
             if (mesh < 0) return;
             var node = new JsonObject { ["name"] = nodeName, ["mesh"] = mesh };
             if (!world.IsIdentity) node["matrix"] = MatrixJson(world);
@@ -44,21 +44,21 @@ namespace Mk2.Export
 
         private int AddNode(JsonObject node, int? parent)
         {
-            int idx = _nodes.Count;
-            _nodes.Add(node);
-            if (parent.HasValue) ((JsonArray)_nodes[parent.Value]!["children"]!).Add(idx);
-            else _rootNodes.Add(idx);
-            return idx;
+            int nodeIndex = nodes.Count;
+            nodes.Add(node);
+            if (parent.HasValue) ((JsonArray)nodes[parent.Value]!["children"]!).Add(nodeIndex);
+            else rootNodes.Add(nodeIndex);
+            return nodeIndex;
         }
 
-        public void AddCollision(Collision c, Matrix4x4 world, string name, int? parent = null)
+        public void AddCollision(Collision collision, Matrix4x4 world, string name, int? parent = null)
         {
-            if (c == null || c.Triangles.Count == 0) return;
-            var pos = c.Vertices.ToArray();
-            var idx = new List<int>();
-            foreach (var t in c.Triangles) { idx.Add(t.A); idx.Add(t.B); idx.Add(t.C); }
-            var cols = c.VertexColors.Select(u => new Vector4((u & 0xFF) / 255f, ((u >> 8) & 0xFF) / 255f, ((u >> 16) & 0xFF) / 255f, 1f)).ToArray();
-            int mat = CollisionMaterial();
+            if (collision == null || collision.Triangles.Count == 0) return;
+            var pos = collision.Vertices.ToArray();
+            var indices = new List<int>();
+            foreach (var triangle in collision.Triangles) { indices.Add(triangle.First); indices.Add(triangle.Second); indices.Add(triangle.Third); }
+            var cols = collision.VertexColors.Select(packed => new Vector4((packed & 0xFF) / 255f, ((packed >> 8) & 0xFF) / 255f, ((packed >> 16) & 0xFF) / 255f, 1f)).ToArray();
+            int materialIndex = CollisionMaterial();
             var prim = new JsonObject
             {
                 ["attributes"] = new JsonObject
@@ -66,11 +66,11 @@ namespace Mk2.Export
                     ["POSITION"] = Accessor(pos),
                     ["COLOR_0"] = Accessor(cols),
                 },
-                ["indices"] = Indices(idx),
-                ["material"] = mat,
+                ["indices"] = Indices(indices),
+                ["material"] = materialIndex,
             };
-            int mesh = _meshes.Count;
-            _meshes.Add(new JsonObject { ["name"] = name, ["primitives"] = new JsonArray(prim) });
+            int mesh = meshes.Count;
+            meshes.Add(new JsonObject { ["name"] = name, ["primitives"] = new JsonArray(prim) });
             var node = new JsonObject { ["name"] = name, ["mesh"] = mesh };
             if (!world.IsIdentity) node["matrix"] = MatrixJson(world);
             AddNode(node, parent);
@@ -78,210 +78,210 @@ namespace Mk2.Export
 
         public void AddScene(LevelScene scene, bool objects = true)
         {
-            foreach (var ch in scene.Chunks)
+            foreach (var chunk in scene.Chunks)
             {
-                int g = AddGroup(ch.Def.Name);
-                foreach (var (ov, m) in ch.Overlays)
-                    if (m != null) AddModel(m, Matrix4x4.Identity, ov.Name, g);
-                if (ch.EnvDome != null) AddModel(ch.EnvDome, Matrix4x4.Identity, "envDome_" + ch.EnvDome.Name, g);
+                int group = AddGroup(chunk.Def.Name);
+                foreach (var (overlay, loadedModel) in chunk.Overlays)
+                    if (loadedModel != null) AddModel(loadedModel, Matrix4x4.Identity, overlay.Name, group);
+                if (chunk.EnvDome != null) AddModel(chunk.EnvDome, Matrix4x4.Identity, "envDome_" + chunk.EnvDome.Name, group);
                 if (IncludeGroundCollision)
-                    foreach (var (n, c) in ch.Grounds) AddCollision(c, Matrix4x4.Identity, "collision_" + n, g);
+                    foreach (var (name, collision) in chunk.Grounds) AddCollision(collision, Matrix4x4.Identity, "collision_" + name, group);
                 if (!objects) continue;
-                int og = AddGroup(ch.Def.Name + "_objects", g);
-                foreach (var o in ch.Objects)
-                    if (ch.ObjectModels.TryGetValue(o, out var m))
-                        AddModel(m, o.ModelMatrix, $"{o.Index:0000}_{o.DisplayName}", og);
+                int objectGroup = AddGroup(chunk.Def.Name + "_objects", group);
+                foreach (var levelObject in chunk.Objects)
+                    if (chunk.ObjectModels.TryGetValue(levelObject, out var loadedModel))
+                        AddModel(loadedModel, levelObject.ModelMatrix, $"{levelObject.Index:0000}_{levelObject.DisplayName}", objectGroup);
             }
         }
 
         private int CollisionMaterial()
         {
-            if (_materialIndex.TryGetValue("<collision>", out var i)) return i;
-            i = _materials.Count;
-            _materials.Add(new JsonObject
+            if (materialIndices.TryGetValue("<collision>", out var index)) return index;
+            index = materials.Count;
+            materials.Add(new JsonObject
             {
                 ["name"] = "collision",
                 ["doubleSided"] = true,
                 ["pbrMetallicRoughness"] = new JsonObject { ["baseColorFactor"] = new JsonArray(1, 1, 1, 1), ["metallicFactor"] = 0, ["roughnessFactor"] = 1 },
             });
-            _materialIndex["<collision>"] = i;
-            return i;
+            materialIndices["<collision>"] = index;
+            return index;
         }
 
-        private int MeshFor(LoadedModel m)
+        private int MeshFor(LoadedModel loadedModel)
         {
-            if (m?.Model == null) return -1;
-            if (_meshIndex.TryGetValue(m, out var existing)) return existing;
+            if (loadedModel?.Model == null) return -1;
+            if (meshIndices.TryGetValue(loadedModel, out var existing)) return existing;
             var prims = new JsonArray();
-            for (int mi = 0; mi < m.Model.MaterialNames.Count; mi++)
+            for (int materialIndex = 0; materialIndex < loadedModel.Model.MaterialNames.Count; materialIndex++)
             {
-                var verts = new List<ModelVertex>();
-                var idx = new List<int>();
-                foreach (var mesh in m.Model.Meshes.Where(x => x.MaterialIndex == mi))
+                var vertices = new List<ModelVertex>();
+                var indices = new List<int>();
+                foreach (var mesh in loadedModel.Model.Meshes.Where(candidate => candidate.MaterialIndex == materialIndex))
                 {
-                    var comp = m.Model.Components[mesh.ComponentIndex];
+                    var comp = loadedModel.Model.Components[mesh.ComponentIndex];
                     if (comp.IsCollision && !IncludeCollisionComponents) continue;
                     if (comp.IsFragment && !IncludeFragments) continue;
-                    mesh.Triangulate(verts, idx);
+                    mesh.Triangulate(vertices, indices);
                 }
-                if (idx.Count == 0) continue;
-                var mat = mi < m.Materials.Count ? m.Materials[mi] : Material.Default(m.Model.MaterialNames[mi]);
+                if (indices.Count == 0) continue;
+                var material = materialIndex < loadedModel.Materials.Count ? loadedModel.Materials[materialIndex] : Material.Default(loadedModel.Model.MaterialNames[materialIndex]);
                 var prim = new JsonObject
                 {
                     ["attributes"] = new JsonObject
                     {
-                        ["POSITION"] = Accessor(verts.Select(v => v.Position).ToArray()),
-                        ["NORMAL"] = Accessor(verts.Select(v => v.Normal.LengthSquared() > 1e-6f ? Vector3.Normalize(v.Normal) : Vector3.UnitY).ToArray()),
-                        ["TEXCOORD_0"] = Accessor(verts.Select(v => v.UV).ToArray()),
-                        ["COLOR_0"] = Accessor(verts.Select(v => Vector4.Min(v.Color, Vector4.One)).ToArray()),
+                        ["POSITION"] = Accessor(vertices.Select(vertex => vertex.Position).ToArray()),
+                        ["NORMAL"] = Accessor(vertices.Select(vertex => vertex.Normal.LengthSquared() > 1e-6f ? Vector3.Normalize(vertex.Normal) : Vector3.UnitY).ToArray()),
+                        ["TEXCOORD_0"] = Accessor(vertices.Select(vertex => vertex.UV).ToArray()),
+                        ["COLOR_0"] = Accessor(vertices.Select(vertex => Vector4.Min(vertex.Color, Vector4.One)).ToArray()),
                     },
-                    ["indices"] = Indices(idx),
-                    ["material"] = MaterialFor(mat),
+                    ["indices"] = Indices(indices),
+                    ["material"] = MaterialFor(material),
                 };
                 prims.Add(prim);
             }
             int index = -1;
             if (prims.Count > 0)
             {
-                index = _meshes.Count;
-                _meshes.Add(new JsonObject { ["name"] = m.Name, ["primitives"] = prims });
+                index = meshes.Count;
+                meshes.Add(new JsonObject { ["name"] = loadedModel.Name, ["primitives"] = prims });
             }
-            _meshIndex[m] = index;
+            meshIndices[loadedModel] = index;
             return index;
         }
 
-        private int MaterialFor(Material mat)
+        private int MaterialFor(Material material)
         {
-            if (_materialIndex.TryGetValue(mat.Name, out var i)) return i;
-            var tex = _assets.GetTexture(mat.TextureName);
+            if (materialIndices.TryGetValue(material.Name, out var index)) return index;
+            var texture = assetCache.GetTexture(material.TextureName);
             var pbr = new JsonObject { ["metallicFactor"] = 0, ["roughnessFactor"] = 1 };
-            if (tex != null) pbr["baseColorTexture"] = new JsonObject { ["index"] = TextureFor(tex) };
-            var jm = new JsonObject { ["name"] = mat.Name, ["pbrMetallicRoughness"] = pbr, ["doubleSided"] = true };
-            if (mat.Blend != BlendMode.Opaque || (tex != null && tex.HasAlpha && !tex.HasCutout && !mat.AlphaTest))
-                jm["alphaMode"] = "BLEND";
-            else if (mat.AlphaTest || (tex != null && tex.HasCutout))
+            if (texture != null) pbr["baseColorTexture"] = new JsonObject { ["index"] = TextureFor(texture) };
+            var materialJson = new JsonObject { ["name"] = material.Name, ["pbrMetallicRoughness"] = pbr, ["doubleSided"] = true };
+            if (material.Blend != BlendMode.Opaque || (texture != null && texture.HasAlpha && !texture.HasCutout && !material.AlphaTest))
+                materialJson["alphaMode"] = "BLEND";
+            else if (material.AlphaTest || (texture != null && texture.HasCutout))
             {
-                jm["alphaMode"] = "MASK";
-                jm["alphaCutoff"] = mat.AlphaRef > 0 ? mat.AlphaRef : 0.5f;
+                materialJson["alphaMode"] = "MASK";
+                materialJson["alphaCutoff"] = material.AlphaRef > 0 ? material.AlphaRef : 0.5f;
             }
-            if (mat.Blend == BlendMode.Additive) jm["extras"] = new JsonObject { ["mk2Blend"] = "additive" };
-            i = _materials.Count;
-            _materials.Add(jm);
-            _materialIndex[mat.Name] = i;
-            return i;
+            if (material.Blend == BlendMode.Additive) materialJson["extras"] = new JsonObject { ["mk2Blend"] = "additive" };
+            index = materials.Count;
+            materials.Add(materialJson);
+            materialIndices[material.Name] = index;
+            return index;
         }
 
-        private int TextureFor(Texture t)
+        private int TextureFor(Texture texture)
         {
-            if (_textureIndex.TryGetValue(t.Name, out var i)) return i;
-            var png = Png.Encode(t.Rgba, t.Width, t.Height);
+            if (textureIndices.TryGetValue(texture.Name, out var index)) return index;
+            var png = Png.Encode(texture.Rgba, texture.Width, texture.Height);
             int view = View(png, null);
-            _images.Add(new JsonObject { ["name"] = t.Name, ["mimeType"] = "image/png", ["bufferView"] = view });
-            i = _textures.Count;
-            _textures.Add(new JsonObject { ["source"] = _images.Count - 1, ["sampler"] = 0 });
-            _textureIndex[t.Name] = i;
-            return i;
+            images.Add(new JsonObject { ["name"] = texture.Name, ["mimeType"] = "image/png", ["bufferView"] = view });
+            index = textures.Count;
+            textures.Add(new JsonObject { ["source"] = images.Count - 1, ["sampler"] = 0 });
+            textureIndices[texture.Name] = index;
+            return index;
         }
 
         private int View(byte[] data, int? target)
         {
-            while (_bin.Length % 4 != 0) _bin.WriteByte(0);
-            var v = new JsonObject { ["buffer"] = 0, ["byteOffset"] = _bin.Length, ["byteLength"] = data.Length };
-            if (target.HasValue) v["target"] = target.Value;
-            _bin.Write(data);
-            _views.Add(v);
-            return _views.Count - 1;
+            while (binary.Length % 4 != 0) binary.WriteByte(0);
+            var view = new JsonObject { ["buffer"] = 0, ["byteOffset"] = binary.Length, ["byteLength"] = data.Length };
+            if (target.HasValue) view["target"] = target.Value;
+            binary.Write(data);
+            views.Add(view);
+            return views.Count - 1;
         }
 
-        private int Accessor(Vector3[] v)
+        private int Accessor(Vector3[] values)
         {
-            var b = new byte[v.Length * 12];
-            var mn = new Vector3(float.MaxValue); var mx = new Vector3(float.MinValue);
-            for (int i = 0; i < v.Length; i++)
+            var bytes = new byte[values.Length * 12];
+            var min = new Vector3(float.MaxValue); var max = new Vector3(float.MinValue);
+            for (int index = 0; index < values.Length; index++)
             {
-                BitConverter.TryWriteBytes(b.AsSpan(i * 12), v[i].X);
-                BitConverter.TryWriteBytes(b.AsSpan(i * 12 + 4), v[i].Y);
-                BitConverter.TryWriteBytes(b.AsSpan(i * 12 + 8), v[i].Z);
-                mn = Vector3.Min(mn, v[i]); mx = Vector3.Max(mx, v[i]);
+                BitConverter.TryWriteBytes(bytes.AsSpan(index * 12), values[index].X);
+                BitConverter.TryWriteBytes(bytes.AsSpan(index * 12 + 4), values[index].Y);
+                BitConverter.TryWriteBytes(bytes.AsSpan(index * 12 + 8), values[index].Z);
+                min = Vector3.Min(min, values[index]); max = Vector3.Max(max, values[index]);
             }
-            int view = View(b, 34962);
-            _accessors.Add(new JsonObject
+            int view = View(bytes, 34962);
+            accessors.Add(new JsonObject
             {
-                ["bufferView"] = view, ["componentType"] = 5126, ["count"] = v.Length, ["type"] = "VEC3",
-                ["min"] = new JsonArray(mn.X, mn.Y, mn.Z), ["max"] = new JsonArray(mx.X, mx.Y, mx.Z),
+                ["bufferView"] = view, ["componentType"] = 5126, ["count"] = values.Length, ["type"] = "VEC3",
+                ["min"] = new JsonArray(min.X, min.Y, min.Z), ["max"] = new JsonArray(max.X, max.Y, max.Z),
             });
-            return _accessors.Count - 1;
+            return accessors.Count - 1;
         }
 
-        private int Accessor(Vector2[] v)
+        private int Accessor(Vector2[] values)
         {
-            var b = new byte[v.Length * 8];
-            for (int i = 0; i < v.Length; i++)
+            var bytes = new byte[values.Length * 8];
+            for (int index = 0; index < values.Length; index++)
             {
-                BitConverter.TryWriteBytes(b.AsSpan(i * 8), v[i].X);
-                BitConverter.TryWriteBytes(b.AsSpan(i * 8 + 4), v[i].Y);
+                BitConverter.TryWriteBytes(bytes.AsSpan(index * 8), values[index].X);
+                BitConverter.TryWriteBytes(bytes.AsSpan(index * 8 + 4), values[index].Y);
             }
-            int view = View(b, 34962);
-            _accessors.Add(new JsonObject { ["bufferView"] = view, ["componentType"] = 5126, ["count"] = v.Length, ["type"] = "VEC2" });
-            return _accessors.Count - 1;
+            int view = View(bytes, 34962);
+            accessors.Add(new JsonObject { ["bufferView"] = view, ["componentType"] = 5126, ["count"] = values.Length, ["type"] = "VEC2" });
+            return accessors.Count - 1;
         }
 
-        private int Accessor(Vector4[] v)
+        private int Accessor(Vector4[] values)
         {
-            var b = new byte[v.Length * 16];
-            for (int i = 0; i < v.Length; i++)
+            var bytes = new byte[values.Length * 16];
+            for (int index = 0; index < values.Length; index++)
             {
-                BitConverter.TryWriteBytes(b.AsSpan(i * 16), v[i].X);
-                BitConverter.TryWriteBytes(b.AsSpan(i * 16 + 4), v[i].Y);
-                BitConverter.TryWriteBytes(b.AsSpan(i * 16 + 8), v[i].Z);
-                BitConverter.TryWriteBytes(b.AsSpan(i * 16 + 12), v[i].W);
+                BitConverter.TryWriteBytes(bytes.AsSpan(index * 16), values[index].X);
+                BitConverter.TryWriteBytes(bytes.AsSpan(index * 16 + 4), values[index].Y);
+                BitConverter.TryWriteBytes(bytes.AsSpan(index * 16 + 8), values[index].Z);
+                BitConverter.TryWriteBytes(bytes.AsSpan(index * 16 + 12), values[index].W);
             }
-            int view = View(b, 34962);
-            _accessors.Add(new JsonObject { ["bufferView"] = view, ["componentType"] = 5126, ["count"] = v.Length, ["type"] = "VEC4" });
-            return _accessors.Count - 1;
+            int view = View(bytes, 34962);
+            accessors.Add(new JsonObject { ["bufferView"] = view, ["componentType"] = 5126, ["count"] = values.Length, ["type"] = "VEC4" });
+            return accessors.Count - 1;
         }
 
-        private int Indices(List<int> idx)
+        private int Indices(List<int> indices)
         {
-            var b = new byte[idx.Count * 4];
-            for (int i = 0; i < idx.Count; i++) BitConverter.TryWriteBytes(b.AsSpan(i * 4), (uint)idx[i]);
-            int view = View(b, 34963);
-            _accessors.Add(new JsonObject { ["bufferView"] = view, ["componentType"] = 5125, ["count"] = idx.Count, ["type"] = "SCALAR" });
-            return _accessors.Count - 1;
+            var bytes = new byte[indices.Count * 4];
+            for (int index = 0; index < indices.Count; index++) BitConverter.TryWriteBytes(bytes.AsSpan(index * 4), (uint)indices[index]);
+            int view = View(bytes, 34963);
+            accessors.Add(new JsonObject { ["bufferView"] = view, ["componentType"] = 5125, ["count"] = indices.Count, ["type"] = "SCALAR" });
+            return accessors.Count - 1;
         }
 
-        private static JsonArray MatrixJson(Matrix4x4 m) => new(
-            m.M11, m.M12, m.M13, m.M14, m.M21, m.M22, m.M23, m.M24,
-            m.M31, m.M32, m.M33, m.M34, m.M41, m.M42, m.M43, m.M44);
+        private static JsonArray MatrixJson(Matrix4x4 matrix) => new(
+            matrix.M11, matrix.M12, matrix.M13, matrix.M14, matrix.M21, matrix.M22, matrix.M23, matrix.M24,
+            matrix.M31, matrix.M32, matrix.M33, matrix.M34, matrix.M41, matrix.M42, matrix.M43, matrix.M44);
 
         public void Save(string path)
         {
-            while (_bin.Length % 4 != 0) _bin.WriteByte(0);
+            while (binary.Length % 4 != 0) binary.WriteByte(0);
             var root = new JsonObject
             {
                 ["asset"] = new JsonObject { ["version"] = "2.0", ["generator"] = "purpleEdit" },
                 ["scene"] = 0,
-                ["scenes"] = new JsonArray(new JsonObject { ["nodes"] = _rootNodes }),
-                ["nodes"] = _nodes,
-                ["meshes"] = _meshes,
-                ["accessors"] = _accessors,
-                ["bufferViews"] = _views,
-                ["buffers"] = new JsonArray(new JsonObject { ["byteLength"] = _bin.Length }),
+                ["scenes"] = new JsonArray(new JsonObject { ["nodes"] = rootNodes }),
+                ["nodes"] = nodes,
+                ["meshes"] = meshes,
+                ["accessors"] = accessors,
+                ["bufferViews"] = views,
+                ["buffers"] = new JsonArray(new JsonObject { ["byteLength"] = binary.Length }),
                 ["samplers"] = new JsonArray(new JsonObject { ["wrapS"] = 10497, ["wrapT"] = 10497, ["magFilter"] = 9729, ["minFilter"] = 9987 }),
             };
-            if (_materials.Count > 0) root["materials"] = _materials;
-            if (_textures.Count > 0) { root["textures"] = _textures; root["images"] = _images; }
+            if (materials.Count > 0) root["materials"] = materials;
+            if (textures.Count > 0) { root["textures"] = textures; root["images"] = images; }
             var json = Encoding.UTF8.GetBytes(root.ToJsonString());
             int jsonPad = (4 - json.Length % 4) % 4;
-            var bin = _bin.ToArray();
-            using var fs = File.Create(path);
-            using var w = new BinaryWriter(fs);
-            w.Write(0x46546C67); w.Write(2);
-            w.Write(12 + 8 + json.Length + jsonPad + 8 + bin.Length);
-            w.Write(json.Length + jsonPad); w.Write(0x4E4F534A);
-            w.Write(json); for (int i = 0; i < jsonPad; i++) w.Write((byte)' ');
-            w.Write(bin.Length); w.Write(0x004E4942);
-            w.Write(bin);
+            var bin = binary.ToArray();
+            using var stream = File.Create(path);
+            using var writer = new BinaryWriter(stream);
+            writer.Write(0x46546C67); writer.Write(2);
+            writer.Write(12 + 8 + json.Length + jsonPad + 8 + bin.Length);
+            writer.Write(json.Length + jsonPad); writer.Write(0x4E4F534A);
+            writer.Write(json); for (int index = 0; index < jsonPad; index++) writer.Write((byte)' ');
+            writer.Write(bin.Length); writer.Write(0x004E4942);
+            writer.Write(bin);
         }
     }
 }

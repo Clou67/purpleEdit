@@ -29,11 +29,11 @@ namespace Mk2.Viewer.Rendering
         public void LookAt(Vector3 eye, Vector3 target)
         {
             Position = eye;
-            var d = target - eye;
-            if (d.LengthSquared() < 1e-6f) return;
-            d = Vector3.Normalize(d);
-            Pitch = MathF.Asin(Math.Clamp(d.Y, -1f, 1f));
-            Yaw = MathF.Atan2(d.X, -d.Z);
+            var direction = target - eye;
+            if (direction.LengthSquared() < 1e-6f) return;
+            direction = Vector3.Normalize(direction);
+            Pitch = MathF.Asin(Math.Clamp(direction.Y, -1f, 1f));
+            Yaw = MathF.Atan2(direction.X, -direction.Z);
         }
 
         /// <summary>
@@ -42,30 +42,30 @@ namespace Mk2.Viewer.Rendering
         /// </summary>
         public void Frame(Vector3 min, Vector3 max, bool fromFront = false)
         {
-            var c = (min + max) * 0.5f;
-            float r = Math.Max((max - min).Length() * 0.5f, 100f);
-            var dir = Vector3.Normalize(fromFront ? new Vector3(0.55f, 0.35f, -0.75f) : new Vector3(0.6f, 0.55f, 0.6f));
-            LookAt(c + dir * r * 1.6f, c);
-            Speed = Math.Clamp(r * 0.6f, 500f, 40000f);
-            Far = Math.Max(600000f, r * 8f);
+            var center = (min + max) * 0.5f;
+            float radius = Math.Max((max - min).Length() * 0.5f, 100f);
+            var direction = Vector3.Normalize(fromFront ? new Vector3(0.55f, 0.35f, -0.75f) : new Vector3(0.6f, 0.55f, 0.6f));
+            LookAt(center + direction * radius * 1.6f, center);
+            Speed = Math.Clamp(radius * 0.6f, 500f, 40000f);
+            Far = Math.Max(600000f, radius * 8f);
         }
 
-        public void Rotate(float dx, float dy)
+        public void Rotate(float yawDelta, float pitchDelta)
         {
-            Yaw += dx;
-            Pitch = Math.Clamp(Pitch + dy, -1.55f, 1.55f);
+            Yaw += yawDelta;
+            Pitch = Math.Clamp(Pitch + pitchDelta, -1.55f, 1.55f);
         }
 
         /// <summary>World-space ray through a pixel.</summary>
-        public void Ray(float px, float py, int w, int h, out Vector3 origin, out Vector3 dir)
+        public void Ray(float pixelX, float pixelY, int width, int height, out Vector3 origin, out Vector3 direction)
         {
-            float x = 2f * px / Math.Max(w, 1) - 1f;
-            float y = 1f - 2f * py / Math.Max(h, 1);
-            float t = MathF.Tan(FovY / 2f);
-            float aspect = w / (float)Math.Max(h, 1);
-            var f = Forward; var r = Right; var u = Up;
+            float screenX = 2f * pixelX / Math.Max(width, 1) - 1f;
+            float screenY = 1f - 2f * pixelY / Math.Max(height, 1);
+            float halfHeight = MathF.Tan(FovY / 2f);
+            float aspect = width / (float)Math.Max(height, 1);
+            var forward = Forward; var right = Right; var up = Up;
             origin = Position;
-            dir = Vector3.Normalize(f + r * (x * t * aspect) + u * (y * t));
+            direction = Vector3.Normalize(forward + right * (screenX * halfHeight * aspect) + up * (screenY * halfHeight));
         }
     }
 }

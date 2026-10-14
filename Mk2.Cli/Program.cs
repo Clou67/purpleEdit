@@ -27,9 +27,9 @@ static class Program
                 default: Usage(); return 1;
             }
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            Console.Error.WriteLine("Error: " + ex);
+            Console.Error.WriteLine("Error: " + exception);
             return 2;
         }
     }
@@ -55,125 +55,125 @@ gameRoot = any folder containing the extracted files and/or .BPK/.RKV archives."
 
     static GameData Open(string root)
     {
-        var sw = Stopwatch.StartNew();
-        var g = new GameData(root);
-        foreach (var l in g.Log) Console.Error.WriteLine("  " + l);
-        Console.Error.WriteLine($"  (indexed in {sw.ElapsedMilliseconds} ms)");
-        return g;
+        var stopwatch = Stopwatch.StartNew();
+        var game = new GameData(root);
+        foreach (var line in game.Log) Console.Error.WriteLine("  " + line);
+        Console.Error.WriteLine($"  (indexed in {stopwatch.ElapsedMilliseconds} ms)");
+        return game;
     }
 
-    static int Levels(string[] a)
+    static int Levels(string[] arguments)
     {
-        var g = Open(a[1]);
-        foreach (var lv in LevelLoader.LoadLevelList(g))
+        var game = Open(arguments[1]);
+        foreach (var level in LevelLoader.LoadLevelList(game))
         {
-            Console.WriteLine($"{lv.Name}  (start {lv.StartChunk}, env {lv.EnvChunk})");
-            foreach (var c in lv.Chunks)
+            Console.WriteLine($"{level.Name}  (start {level.StartChunk}, env {level.EnvChunk})");
+            foreach (var chunkDef in level.Chunks)
             {
-                string pack = g.ChunkPack(c.Name) != null ? "" : "  [no BPK]";
-                Console.WriteLine($"   {c.Name,-22} overlays:{c.Overlays.Count,3} grounds:{c.Grounds.Count,3} {(c.EnvDome != null ? "dome:" + c.EnvDome : "")}{pack}");
+                string pack = game.ChunkPack(chunkDef.Name) != null ? "" : "  [no BPK]";
+                Console.WriteLine($"   {chunkDef.Name,-22} overlays:{chunkDef.Overlays.Count,3} grounds:{chunkDef.Grounds.Count,3} {(chunkDef.EnvDome != null ? "dome:" + chunkDef.EnvDome : "")}{pack}");
             }
         }
         return 0;
     }
 
-    static LevelDef FindLevel(GameData g, string name)
+    static LevelDef FindLevel(GameData game, string name)
     {
-        var lv = LevelLoader.LoadLevelList(g).FirstOrDefault(l => string.Equals(l.Name, name, StringComparison.OrdinalIgnoreCase));
-        if (lv == null) throw new ArgumentException("Level not found: " + name);
-        return lv;
+        var level = LevelLoader.LoadLevelList(game).FirstOrDefault(candidate => string.Equals(candidate.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (level == null) throw new ArgumentException("Level not found: " + name);
+        return level;
     }
 
-    static ModelDb Db(GameData g) => new ModelDb(g.ReadBni("global.model.bni"));
+    static ModelDb Db(GameData game) => new ModelDb(game.ReadBni("global.model.bni"));
 
-    static int Objects(string[] a)
+    static int Objects(string[] arguments)
     {
-        var g = Open(a[1]);
-        var lv = FindLevel(g, a[2]);
-        var only = a.Length > 3 ? new HashSet<string>(new[] { a[3] }, StringComparer.OrdinalIgnoreCase) : null;
-        var scene = LevelLoader.Load(g, lv, Db(g), onlyChunks: only);
-        foreach (var ch in scene.Chunks)
+        var game = Open(arguments[1]);
+        var level = FindLevel(game, arguments[2]);
+        var only = arguments.Length > 3 ? new HashSet<string>(new[] { arguments[3] }, StringComparer.OrdinalIgnoreCase) : null;
+        var scene = LevelLoader.Load(game, level, Db(game), onlyChunks: only);
+        foreach (var chunk in scene.Chunks)
         {
-            if (only != null && !only.Contains(ch.Def.Name)) continue;
-            Console.WriteLine($"== {ch.Def.Name}: {ch.Objects.Count} objects");
-            foreach (var o in ch.Objects)
+            if (only != null && !only.Contains(chunk.Def.Name)) continue;
+            Console.WriteLine($"== {chunk.Def.Name}: {chunk.Objects.Count} objects");
+            foreach (var levelObject in chunk.Objects)
             {
-                ch.ObjectModels.TryGetValue(o, out var m);
-                Console.WriteLine($"  {o.Index,4} {o.Category,-10} {o.DisplayName,-45} pos({o.Position.X:0},{o.Position.Y:0},{o.Position.Z:0}) model={(m?.Name ?? "-")} shapes={o.Shapes.Count}");
+                chunk.ObjectModels.TryGetValue(levelObject, out var loadedModel);
+                Console.WriteLine($"  {levelObject.Index,4} {levelObject.Category,-10} {levelObject.DisplayName,-45} pos({levelObject.Position.X:0},{levelObject.Position.Y:0},{levelObject.Position.Z:0}) model={(loadedModel?.Name ?? "-")} shapes={levelObject.Shapes.Count}");
             }
         }
-        foreach (var w in scene.Warnings.Distinct()) Console.Error.WriteLine("warn: " + w);
+        foreach (var warning in scene.Warnings.Distinct()) Console.Error.WriteLine("warn: " + warning);
         return 0;
     }
 
-    static int ExportLevel(string[] a)
+    static int ExportLevel(string[] arguments)
     {
-        var g = Open(a[1]);
-        var lv = FindLevel(g, a[2]);
+        var game = Open(arguments[1]);
+        var level = FindLevel(game, arguments[2]);
         HashSet<string> only = null;
-        int ci = Array.IndexOf(a, "--chunks");
-        if (ci > 0) only = new HashSet<string>(a[ci + 1].Split(','), StringComparer.OrdinalIgnoreCase);
-        var sw = Stopwatch.StartNew();
-        var scene = LevelLoader.Load(g, lv, Db(g), onlyChunks: only, progress: s => Console.Error.WriteLine("  " + s));
-        Console.Error.WriteLine($"  loaded in {sw.ElapsedMilliseconds} ms");
-        var ex = new GlbExporter(scene.Assets) { IncludeGroundCollision = a.Contains("--collision") };
-        ex.AddScene(scene, objects: !a.Contains("--no-objects"));
-        ex.Save(a[3]);
-        int tris = scene.Chunks.Sum(c => c.Overlays.Where(o => o.model != null).Sum(o => o.model.Model.TriangleCount));
-        Console.WriteLine($"Wrote {a[3]}: {scene.Chunks.Count} chunks, {tris} overlay triangles, {scene.AllObjects.Count()} objects ({scene.Chunks.Sum(c => c.ObjectModels.Count)} with models)");
-        foreach (var w in scene.Warnings.Distinct()) Console.Error.WriteLine("warn: " + w);
+        int chunksArgument = Array.IndexOf(arguments, "--chunks");
+        if (chunksArgument > 0) only = new HashSet<string>(arguments[chunksArgument + 1].Split(','), StringComparer.OrdinalIgnoreCase);
+        var stopwatch = Stopwatch.StartNew();
+        var scene = LevelLoader.Load(game, level, Db(game), onlyChunks: only, progress: line => Console.Error.WriteLine("  " + line));
+        Console.Error.WriteLine($"  loaded in {stopwatch.ElapsedMilliseconds} ms");
+        var exporter = new GlbExporter(scene.Assets) { IncludeGroundCollision = arguments.Contains("--collision") };
+        exporter.AddScene(scene, objects: !arguments.Contains("--no-objects"));
+        exporter.Save(arguments[3]);
+        int triangles = scene.Chunks.Sum(chunk => chunk.Overlays.Where(overlay => overlay.model != null).Sum(overlay => overlay.model.Model.TriangleCount));
+        Console.WriteLine($"Wrote {arguments[3]}: {scene.Chunks.Count} chunks, {triangles} overlay triangles, {scene.AllObjects.Count()} objects ({scene.Chunks.Sum(chunk => chunk.ObjectModels.Count)} with models)");
+        foreach (var warning in scene.Warnings.Distinct()) Console.Error.WriteLine("warn: " + warning);
         return 0;
     }
 
-    static int ExportModel(string[] a)
+    static int ExportModel(string[] arguments)
     {
-        var g = Open(a[1]);
-        var cache = new AssetCache(g);
-        var m = cache.GetModel(a[2], null) ?? throw new ArgumentException("Model not found: " + a[2]);
-        var ex = new GlbExporter(cache) { IncludeCollisionComponents = a.Contains("--collision") };
-        ex.AddModel(m, Matrix4x4.Identity, m.Name);
-        ex.Save(a[3]);
-        Console.WriteLine($"Wrote {a[3]}: {m.Model.VertexCount} verts, {m.Model.TriangleCount} tris, {m.Model.MaterialNames.Count} materials, comps: {string.Join(", ", m.Model.Components.Select(c => c.Name))}");
-        foreach (var mat in m.Materials)
-            Console.WriteLine($"   material {mat.Name} -> tex {mat.TextureName} {(cache.GetTexture(mat.TextureName) == null ? "(missing)" : "")} flags=0x{mat.Flags:X8} blend={mat.Blend}");
+        var game = Open(arguments[1]);
+        var cache = new AssetCache(game);
+        var loadedModel = cache.GetModel(arguments[2], null) ?? throw new ArgumentException("Model not found: " + arguments[2]);
+        var exporter = new GlbExporter(cache) { IncludeCollisionComponents = arguments.Contains("--collision") };
+        exporter.AddModel(loadedModel, Matrix4x4.Identity, loadedModel.Name);
+        exporter.Save(arguments[3]);
+        Console.WriteLine($"Wrote {arguments[3]}: {loadedModel.Model.VertexCount} verts, {loadedModel.Model.TriangleCount} tris, {loadedModel.Model.MaterialNames.Count} materials, comps: {string.Join(", ", loadedModel.Model.Components.Select(component => component.Name))}");
+        foreach (var material in loadedModel.Materials)
+            Console.WriteLine($"   material {material.Name} -> tex {material.TextureName} {(cache.GetTexture(material.TextureName) == null ? "(missing)" : "")} flags=0x{material.Flags:X8} blend={material.Blend}");
         return 0;
     }
 
-    static int Tex(string[] a)
+    static int Tex(string[] arguments)
     {
-        byte[] d;
+        byte[] data;
         string name;
-        if (File.Exists(a[1])) { d = File.ReadAllBytes(a[1]); name = Path.GetFileNameWithoutExtension(a[1]); }
-        else { var g = Open(a[1]); name = a[2]; d = g.Read(name + ".tex"); a = a.Skip(1).ToArray(); }
-        var t = Texture.Decode(d, name);
-        Png.Save(a[2], t.Rgba, t.Width, t.Height);
-        Console.WriteLine($"{name}: {t.Width}x{t.Height} fmt 0x{t.Format:X2} alpha={t.HasAlpha}");
+        if (File.Exists(arguments[1])) { data = File.ReadAllBytes(arguments[1]); name = Path.GetFileNameWithoutExtension(arguments[1]); }
+        else { var game = Open(arguments[1]); name = arguments[2]; data = game.Read(name + ".tex"); arguments = arguments.Skip(1).ToArray(); }
+        var texture = Texture.Decode(data, name);
+        Png.Save(arguments[2], texture.Rgba, texture.Width, texture.Height);
+        Console.WriteLine($"{name}: {texture.Width}x{texture.Height} fmt 0x{texture.Format:X2} alpha={texture.HasAlpha}");
         return 0;
     }
 
-    static int DumpBni(string[] a)
+    static int DumpBni(string[] arguments)
     {
-        var f = BniFile.Load(a[1]);
-        var txt = f.ToText();
-        if (a.Length > 2) File.WriteAllText(a[2], txt); else Console.Write(txt);
+        var bniFile = BniFile.Load(arguments[1]);
+        var text = bniFile.ToText();
+        if (arguments.Length > 2) File.WriteAllText(arguments[2], text); else Console.Write(text);
         return 0;
     }
 
-    static int Cgr(string[] a)
+    static int Cgr(string[] arguments)
     {
-        var c = Collision.Load(File.ReadAllBytes(a[1]), Path.GetFileName(a[1]));
-        Console.WriteLine($"{c.Name}: grid {c.CellsX}x{c.CellsY}x{c.CellsZ} cell {c.CellSize} bounds {c.BoundsMin}..{c.BoundsMax}");
-        Console.WriteLine($"  {c.Vertices.Count} verts, {c.Triangles.Count} unique tris, materials: {string.Join(", ", c.Materials)}");
-        foreach (var grp in c.Triangles.GroupBy(t => t.Flags).OrderBy(x => x.Key))
-            Console.WriteLine($"  flags 0x{grp.Key:X4} ({c.MaterialName(grp.First())}): {grp.Count()}");
+        var collision = Collision.Load(File.ReadAllBytes(arguments[1]), Path.GetFileName(arguments[1]));
+        Console.WriteLine($"{collision.Name}: grid {collision.CellsX}x{collision.CellsY}x{collision.CellsZ} cell {collision.CellSize} bounds {collision.BoundsMin}..{collision.BoundsMax}");
+        Console.WriteLine($"  {collision.Vertices.Count} verts, {collision.Triangles.Count} unique tris, materials: {string.Join(", ", collision.Materials)}");
+        foreach (var group in collision.Triangles.GroupBy(triangle => triangle.Flags).OrderBy(group => group.Key))
+            Console.WriteLine($"  flags 0x{group.Key:X4} ({collision.MaterialName(group.First())}): {group.Count()}");
         return 0;
     }
 
-    static int Extract(string[] a)
+    static int Extract(string[] arguments)
     {
-        var arc = RkvArchive.Open(a[1]);
-        arc.ExtractAll(a[2], a.Contains("--group"));
-        Console.WriteLine($"Extracted {arc.Entries.Count} files");
+        var archive = RkvArchive.Open(arguments[1]);
+        archive.ExtractAll(arguments[2], arguments.Contains("--group"));
+        Console.WriteLine($"Extracted {archive.Entries.Count} files");
         return 0;
     }
 
@@ -196,7 +196,7 @@ gameRoot = any folder containing the extracted files and/or .BPK/.RKV archives."
         string poseName = "frame 0";
         if (arguments.Length > 4)
         {
-            var clip = cache.GetAnimSet(animationName, animation)?.Clips.FirstOrDefault(c => c.Name.Equals(arguments[4], StringComparison.OrdinalIgnoreCase));
+            var clip = cache.GetAnimSet(animationName, animation)?.Clips.FirstOrDefault(candidate => candidate.Name.Equals(arguments[4], StringComparison.OrdinalIgnoreCase));
             if (clip != null) { frame = clip.Start; poseName = $"clip {clip.Name} (frame {clip.Start})"; }
             else if (float.TryParse(arguments[4], out float parsed)) { frame = parsed; poseName = $"frame {parsed}"; }
         }
@@ -244,109 +244,109 @@ gameRoot = any folder containing the extracted files and/or .BPK/.RKV archives."
         Console.WriteLine();
         Console.WriteLine($"skinned vertices whose node is outside their node list: {unmappedVertices}");
         Console.WriteLine($"vertices that move furthest at {poseName}:");
-        foreach (var entry in moved.OrderByDescending(entry => entry.distance).Take(40)) Console.WriteLine("  " + entry.description);
+        foreach (var entry in moved.OrderByDescending(candidate => candidate.distance).Take(40)) Console.WriteLine("  " + entry.description);
         return 0;
     }
 
-    static int Anim(string[] a)
+    static int Anim(string[] arguments)
     {
-        var g = Open(a[1]);
-        string name = a[2];
-        var cache = new AssetCache(g);
+        var game = Open(arguments[1]);
+        string name = arguments[2];
+        var cache = new AssetCache(game);
         var anim = cache.GetAnimation(name);
-        if (anim == null) { Console.WriteLine($"{name}.anm not found or not readable"); foreach (var w in cache.Warnings) Console.WriteLine("  " + w); return 1; }
+        if (anim == null) { Console.WriteLine($"{name}.anm not found or not readable"); foreach (var warning in cache.Warnings) Console.WriteLine("  " + warning); return 1; }
         var set = cache.GetAnimSet(name, anim);
-        string model = AnimationLookup.FindModelFor(g, name, anim);
+        string model = AnimationLookup.FindModelFor(game, name, anim);
         Console.WriteLine($"{name}: {anim.Bones.Count} bones, {anim.FrameCount} frames, {anim.TransformCount} ANG transforms, header byte5={anim.HeaderByte5}");
         Console.WriteLine($"  model: {model ?? "(no match)"}");
         if (model != null)
         {
-            var lm = cache.GetModel(model, null);
-            var warn = AnimationLookup.CompatibilityWarning(lm?.Model, anim);
+            var loadedModel = cache.GetModel(model, null);
+            var warn = AnimationLookup.CompatibilityWarning(loadedModel?.Model, anim);
             if (warn != null) Console.WriteLine("  warning: " + warn);
         }
-        foreach (var w in anim.Warnings) Console.WriteLine("  warning: " + w);
+        foreach (var warning in anim.Warnings) Console.WriteLine("  warning: " + warning);
         Console.WriteLine();
-        foreach (var b in anim.Bones)
+        foreach (var bone in anim.Bones)
         {
-            Console.WriteLine($"  {b.Index,3} {b.Name,-32} parent {(b.Parent < 0 ? "-" : b.Parent.ToString()),3}  {b.KeyType,-15} {b.Keys.Count,5} keys{(b.IsAnimated ? "" : "  (static)")}  bind {b.BindPosition}");
-            if (a.Contains("--keys"))
-                foreach (var k in b.Keys.Take(12))
-                    Console.WriteLine($"        f{k.Frame,-6} pos {k.Position}  rot {k.Rotation}  scale {k.Scale}");
+            Console.WriteLine($"  {bone.Index,3} {bone.Name,-32} parent {(bone.Parent < 0 ? "-" : bone.Parent.ToString()),3}  {bone.KeyType,-15} {bone.Keys.Count,5} keys{(bone.IsAnimated ? "" : "  (static)")}  bind {bone.BindPosition}");
+            if (arguments.Contains("--keys"))
+                foreach (var key in bone.Keys.Take(12))
+                    Console.WriteLine($"        f{key.Frame,-6} pos {key.Position}  rot {key.Rotation}  scale {key.Scale}");
         }
         if (set != null)
         {
             Console.WriteLine();
             Console.WriteLine($"  clips ({set.Clips.Count}):");
-            foreach (var c in set.Clips)
+            foreach (var clip in set.Clips)
             {
-                Console.WriteLine($"    {c.Start,6}-{c.End,-6} {(c.Loop ? "loop" : "once")}  {c.Name}");
-                foreach (var e in c.Events) Console.WriteLine($"             @{e.Frame} {(e.Type == 1 ? "sound" : "type " + e.Type)} {e.Name}");
+                Console.WriteLine($"    {clip.Start,6}-{clip.End,-6} {(clip.Loop ? "loop" : "once")}  {clip.Name}");
+                foreach (var animationEvent in clip.Events) Console.WriteLine($"             @{animationEvent.Frame} {(animationEvent.Type == 1 ? "sound" : "type " + animationEvent.Type)} {animationEvent.Name}");
             }
         }
         return 0;
     }
 
-    static int Validate(string[] a)
+    static int Validate(string[] arguments)
     {
-        var g = Open(a[1]);
+        var game = Open(arguments[1]);
         int ok = 0, fail = 0;
         var fails = new List<string>();
         var stats = new Dictionary<string, int>();
-        void Bump(string k) => stats[k] = stats.TryGetValue(k, out var v) ? v + 1 : 1;
-        foreach (var arc in g.Archives.ToList())
+        void Bump(string statistic) => stats[statistic] = stats.TryGetValue(statistic, out var count) ? count + 1 : 1;
+        foreach (var archive in game.Archives.ToList())
         {
-            var packs = new[] { arc };
-            foreach (var e in arc.Entries)
+            var packs = new[] { archive };
+            foreach (var entry in archive.Entries)
             {
-                string ext = e.Extension;
+                string extension = entry.Extension;
                 try
                 {
-                    switch (ext)
+                    switch (extension)
                     {
                         case ".mdl":
                         {
-                            string n = Path.GetFileNameWithoutExtension(e.Name);
-                            var mdg = g.Read(n + ".mdg", packs);
+                            string name = Path.GetFileNameWithoutExtension(entry.Name);
+                            var mdg = game.Read(name + ".mdg", packs);
                             if (mdg == null) continue;
-                            var m = Model.Load(arc.Read(e), mdg, n);
-                            if (m.Warnings.Count > 0) throw new Exception(string.Join("; ", m.Warnings));
-                            if (m.DeclaredVertexCount != m.VertexCount) throw new Exception($"vertex count {m.VertexCount} != header {m.DeclaredVertexCount}");
-                            if (m.DeclaredTriangleCount != m.TriangleCount) throw new Exception($"tri count {m.TriangleCount} != header {m.DeclaredTriangleCount}");
-                            Bump(m.Meshes.Any(x => x.Skinned) ? "mdl(skinned)" : "mdl(static)");
+                            var model = Model.Load(archive.Read(entry), mdg, name);
+                            if (model.Warnings.Count > 0) throw new Exception(string.Join("; ", model.Warnings));
+                            if (model.DeclaredVertexCount != model.VertexCount) throw new Exception($"vertex count {model.VertexCount} != header {model.DeclaredVertexCount}");
+                            if (model.DeclaredTriangleCount != model.TriangleCount) throw new Exception($"tri count {model.TriangleCount} != header {model.DeclaredTriangleCount}");
+                            Bump(model.Meshes.Any(mesh => mesh.Skinned) ? "mdl(skinned)" : "mdl(static)");
                             break;
                         }
                         case ".anm":
                         {
-                            string n = Path.GetFileNameWithoutExtension(e.Name);
-                            var anim = Animation.Load(arc.Read(e), g.Read(n + ".ang", packs), n);
+                            string name = Path.GetFileNameWithoutExtension(entry.Name);
+                            var anim = Animation.Load(archive.Read(entry), game.Read(name + ".ang", packs), name);
                             if (anim.Warnings.Count > 0) throw new Exception(string.Join("; ", anim.Warnings));
-                            foreach (var b in anim.Bones)
-                                for (int k = 1; k < b.Keys.Count; k++)
-                                    if (b.Keys[k].Frame < b.Keys[k - 1].Frame) throw new Exception($"{b.Name}: keys out of order");
-                            foreach (var t in anim.Bones.Select(b => b.KeyType).Distinct()) Bump("anm keys " + t);
+                            foreach (var bone in anim.Bones)
+                                for (int keyIndex = 1; keyIndex < bone.Keys.Count; keyIndex++)
+                                    if (bone.Keys[keyIndex].Frame < bone.Keys[keyIndex - 1].Frame) throw new Exception($"{bone.Name}: keys out of order");
+                            foreach (var keyType in anim.Bones.Select(bone => bone.KeyType).Distinct()) Bump("anm keys " + keyType);
                             Bump("anm");
                             break;
                         }
-                        case ".bbi": AnimSet.Parse(arc.Read(e)); Bump("bbi"); break;
-                        case ".tex": Bump("tex fmt " + Texture.Decode(arc.Read(e)).Format.ToString("X2")); break;
-                        case ".cgr": Collision.Load(arc.Read(e)); Bump("cgr"); break;
-                        case ".bni": BniFile.Parse(arc.Read(e)); Bump("bni"); break;
-                        case ".min": Material.Parse(arc.Read(e)); Bump("min"); break;
+                        case ".bbi": AnimSet.Parse(archive.Read(entry)); Bump("bbi"); break;
+                        case ".tex": Bump("tex fmt " + Texture.Decode(archive.Read(entry)).Format.ToString("X2")); break;
+                        case ".cgr": Collision.Load(archive.Read(entry)); Bump("cgr"); break;
+                        case ".bni": BniFile.Parse(archive.Read(entry)); Bump("bni"); break;
+                        case ".min": Material.Parse(archive.Read(entry)); Bump("min"); break;
                         default: continue;
                     }
                     ok++;
                 }
-                catch (Exception ex)
+                catch (Exception exception)
                 {
                     fail++;
-                    fails.Add($"{Path.GetFileName(arc.SourcePath)}/{e.Name}: {ex.Message}");
+                    fails.Add($"{Path.GetFileName(archive.SourcePath)}/{entry.Name}: {exception.Message}");
                 }
             }
         }
-        foreach (var kv in stats.OrderBy(k => k.Key)) Console.WriteLine($"  {kv.Key,-16} {kv.Value}");
+        foreach (var entry in stats.OrderBy(candidate => candidate.Key)) Console.WriteLine($"  {entry.Key,-16} {entry.Value}");
         Console.WriteLine($"OK {ok}, failed {fail}");
-        foreach (var f in fails.Take(50)) Console.WriteLine("  FAIL " + f);
+        foreach (var failure in fails.Take(50)) Console.WriteLine("  FAIL " + failure);
         return fail == 0 ? 0 : 3;
     }
 }

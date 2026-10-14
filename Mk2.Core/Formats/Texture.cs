@@ -30,107 +30,107 @@ namespace Mk2.Formats
         public bool HasAlpha;       // any pixel with alpha < 255
         public bool HasCutout;      // only 0/255 alpha
 
-        public static Texture Decode(byte[] d, string name = null)
+        public static Texture Decode(byte[] data, string name = null)
         {
-            if (d.Length < 0x20 || d[0] != 'T' || d[1] != 'E' || d[2] != 'X')
+            if (data.Length < 0x20 || data[0] != 'T' || data[1] != 'E' || data[2] != 'X')
                 throw new InvalidDataException("Not a TEX file");
-            var b = new Bin(d);
-            var t = new Texture
+            var reader = new Bin(data);
+            var texture = new Texture
             {
                 Name = name,
-                Width = b.U16(4),
-                Height = b.U16(6),
-                Format = d[0x10],
-                Flags = b.U32(0x18),
+                Width = reader.U16(4),
+                Height = reader.U16(6),
+                Format = data[0x10],
+                Flags = reader.U32(0x18),
             };
-            int w = t.Width, h = t.Height, n = w * h;
-            var px = new byte[n * 4];
-            int p = 0x20;
-            switch (t.Format)
+            int width = texture.Width, height = texture.Height, pixelCount = width * height;
+            var pixels = new byte[pixelCount * 4];
+            int dataOffset = 0x20;
+            switch (texture.Format)
             {
                 case 0x00: // RGBA32
-                    for (int i = 0; i < n; i++)
+                    for (int pixel = 0; pixel < pixelCount; pixel++)
                     {
-                        px[i * 4 + 0] = d[p + i * 4 + 0];
-                        px[i * 4 + 1] = d[p + i * 4 + 1];
-                        px[i * 4 + 2] = d[p + i * 4 + 2];
-                        px[i * 4 + 3] = Ps2Alpha(d[p + i * 4 + 3]);
+                        pixels[pixel * 4 + 0] = data[dataOffset + pixel * 4 + 0];
+                        pixels[pixel * 4 + 1] = data[dataOffset + pixel * 4 + 1];
+                        pixels[pixel * 4 + 2] = data[dataOffset + pixel * 4 + 2];
+                        pixels[pixel * 4 + 3] = Ps2Alpha(data[dataOffset + pixel * 4 + 3]);
                     }
                     break;
                 case 0x01: // RGB24
-                    for (int i = 0; i < n; i++)
+                    for (int pixel = 0; pixel < pixelCount; pixel++)
                     {
-                        px[i * 4 + 0] = d[p + i * 3 + 0];
-                        px[i * 4 + 1] = d[p + i * 3 + 1];
-                        px[i * 4 + 2] = d[p + i * 3 + 2];
-                        px[i * 4 + 3] = 255;
+                        pixels[pixel * 4 + 0] = data[dataOffset + pixel * 3 + 0];
+                        pixels[pixel * 4 + 1] = data[dataOffset + pixel * 3 + 1];
+                        pixels[pixel * 4 + 2] = data[dataOffset + pixel * 3 + 2];
+                        pixels[pixel * 4 + 3] = 255;
                     }
                     break;
                 case 0x13: // 8bpp
                 {
-                    int pal = p + n;
+                    int palette = dataOffset + pixelCount;
                     var clut = new byte[256 * 4];
-                    for (int i = 0; i < 256; i++)
+                    for (int entry = 0; entry < 256; entry++)
                     {
-                        int j = (i & 0xE7) | ((i & 0x08) << 1) | ((i & 0x10) >> 1);
-                        int s = pal + j * 4;
-                        if (s + 3 >= d.Length) continue;
-                        clut[i * 4 + 0] = d[s]; clut[i * 4 + 1] = d[s + 1];
-                        clut[i * 4 + 2] = d[s + 2]; clut[i * 4 + 3] = Ps2Alpha(d[s + 3]);
+                        int swizzled = (entry & 0xE7) | ((entry & 0x08) << 1) | ((entry & 0x10) >> 1);
+                        int source = palette + swizzled * 4;
+                        if (source + 3 >= data.Length) continue;
+                        clut[entry * 4 + 0] = data[source]; clut[entry * 4 + 1] = data[source + 1];
+                        clut[entry * 4 + 2] = data[source + 2]; clut[entry * 4 + 3] = Ps2Alpha(data[source + 3]);
                     }
-                    for (int i = 0; i < n; i++)
-                        Buffer.BlockCopy(clut, d[p + i] * 4, px, i * 4, 4);
+                    for (int pixel = 0; pixel < pixelCount; pixel++)
+                        Buffer.BlockCopy(clut, data[dataOffset + pixel] * 4, pixels, pixel * 4, 4);
                     break;
                 }
                 case 0x14: // 4bpp
                 {
-                    int pal = p + n / 2;
+                    int palette = dataOffset + pixelCount / 2;
                     var clut = new byte[16 * 4];
-                    for (int i = 0; i < 16; i++)
+                    for (int entry = 0; entry < 16; entry++)
                     {
-                        int j = (i & 7) + (i >> 3) * 16;
-                        int s = pal + j * 4;
-                        if (s + 3 >= d.Length) continue;
-                        clut[i * 4 + 0] = d[s]; clut[i * 4 + 1] = d[s + 1];
-                        clut[i * 4 + 2] = d[s + 2]; clut[i * 4 + 3] = Ps2Alpha(d[s + 3]);
+                        int clutIndex = (entry & 7) + (entry >> 3) * 16;
+                        int source = palette + clutIndex * 4;
+                        if (source + 3 >= data.Length) continue;
+                        clut[entry * 4 + 0] = data[source]; clut[entry * 4 + 1] = data[source + 1];
+                        clut[entry * 4 + 2] = data[source + 2]; clut[entry * 4 + 3] = Ps2Alpha(data[source + 3]);
                     }
-                    for (int i = 0; i < n; i++)
+                    for (int pixel = 0; pixel < pixelCount; pixel++)
                     {
-                        int v = d[p + (i >> 1)];
-                        int idx = (i & 1) == 0 ? v & 15 : v >> 4;
-                        Buffer.BlockCopy(clut, idx * 4, px, i * 4, 4);
+                        int packed = data[dataOffset + (pixel >> 1)];
+                        int paletteIndex = (pixel & 1) == 0 ? packed & 15 : packed >> 4;
+                        Buffer.BlockCopy(clut, paletteIndex * 4, pixels, pixel * 4, 4);
                     }
                     break;
                 }
                 default:
-                    throw new NotSupportedException($"TEX format 0x{t.Format:X2}");
+                    throw new NotSupportedException($"TEX format 0x{texture.Format:X2}");
             }
-            t.Rgba = px;
+            texture.Rgba = pixels;
             bool any = false, partial = false;
-            for (int i = 3; i < px.Length; i += 4)
+            for (int alpha = 3; alpha < pixels.Length; alpha += 4)
             {
-                if (px[i] != 255) { any = true; if (px[i] != 0) partial = true; }
+                if (pixels[alpha] != 255) { any = true; if (pixels[alpha] != 0) partial = true; }
             }
-            t.HasAlpha = any;
-            t.HasCutout = any && !partial;
-            return t;
+            texture.HasAlpha = any;
+            texture.HasCutout = any && !partial;
+            return texture;
         }
 
-        private static byte Ps2Alpha(byte a) => a >= 0x80 ? (byte)255 : (byte)(a * 2);
+        private static byte Ps2Alpha(byte alpha) => alpha >= 0x80 ? (byte)255 : (byte)(alpha * 2);
 
         /// <summary>A small magenta/black checker used when a texture is missing.</summary>
         public static Texture Missing()
         {
-            var t = new Texture { Name = "<missing>", Width = 8, Height = 8, Rgba = new byte[8 * 8 * 4] };
-            for (int y = 0; y < 8; y++)
-                for (int x = 0; x < 8; x++)
+            var texture = new Texture { Name = "<missing>", Width = 8, Height = 8, Rgba = new byte[8 * 8 * 4] };
+            for (int row = 0; row < 8; row++)
+                for (int column = 0; column < 8; column++)
                 {
-                    bool c = ((x >> 2) ^ (y >> 2)) != 0;
-                    int i = (y * 8 + x) * 4;
-                    t.Rgba[i] = c ? (byte)255 : (byte)40; t.Rgba[i + 1] = 0;
-                    t.Rgba[i + 2] = c ? (byte)255 : (byte)40; t.Rgba[i + 3] = 255;
+                    bool light = ((column >> 2) ^ (row >> 2)) != 0;
+                    int offset = (row * 8 + column) * 4;
+                    texture.Rgba[offset] = light ? (byte)255 : (byte)40; texture.Rgba[offset + 1] = 0;
+                    texture.Rgba[offset + 2] = light ? (byte)255 : (byte)40; texture.Rgba[offset + 3] = 255;
                 }
-            return t;
+            return texture;
         }
     }
 }

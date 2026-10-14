@@ -42,33 +42,33 @@ namespace Mk2.Formats
         public bool Scrolls => (Flags & 0x80000) != 0 && (ScrollU != 0 || ScrollV != 0);
         public bool Glow => (Flags & 0x40000000) != 0;
 
-        public static Material Parse(byte[] d, string fallbackName = null)
+        public static Material Parse(byte[] data, string fallbackName = null)
         {
-            var b = new Bin(d);
-            var m = new Material();
-            m.Name = b.FixedStr(0, 32);
-            if (string.IsNullOrEmpty(m.Name)) m.Name = fallbackName;
-            if (d.Length < 0x1E4)
+            var reader = new Bin(data);
+            var material = new Material();
+            material.Name = reader.FixedStr(0, 32);
+            if (string.IsNullOrEmpty(material.Name)) material.Name = fallbackName;
+            if (data.Length < 0x1E4)
             {
-                m.TextureName = m.Name;
-                return m;
+                material.TextureName = material.Name;
+                return material;
             }
-            m.Hash = b.U32(0x20);
-            uint blend = b.U32(0x24);
-            m.Blend = blend <= 2 ? (BlendMode)blend : BlendMode.Opaque;
-            m.AlphaRef = b.F32(0x2C);
-            if (float.IsNaN(m.AlphaRef) || m.AlphaRef < 0 || m.AlphaRef > 1) m.AlphaRef = 0;
-            var col = new float[] { b.F32(0x30), b.F32(0x34), b.F32(0x38), b.F32(0x3C) };
-            if (col.Any(c => c != 0) && col.All(c => c >= 0 && c <= 4)) m.Color = col;
-            m.CollisionSurface = b.FixedStr(0x80, 32);
-            m.GrassType = b.FixedStr(0xA0, 32);
-            m.GrassMaterial = b.FixedStr(0xC0, 40);
-            m.TextureName = b.FixedStr(0xE8, 32);
-            if (string.IsNullOrEmpty(m.TextureName)) m.TextureName = m.Name;
-            m.ScrollU = b.F32(0x140);
-            m.ScrollV = b.F32(0x144);
-            m.Flags = b.U32(0x1E0);
-            return m;
+            material.Hash = reader.U32(0x20);
+            uint blend = reader.U32(0x24);
+            material.Blend = blend <= 2 ? (BlendMode)blend : BlendMode.Opaque;
+            material.AlphaRef = reader.F32(0x2C);
+            if (float.IsNaN(material.AlphaRef) || material.AlphaRef < 0 || material.AlphaRef > 1) material.AlphaRef = 0;
+            var color = new float[] { reader.F32(0x30), reader.F32(0x34), reader.F32(0x38), reader.F32(0x3C) };
+            if (color.Any(component => component != 0) && color.All(component => component >= 0 && component <= 4)) material.Color = color;
+            material.CollisionSurface = reader.FixedStr(0x80, 32);
+            material.GrassType = reader.FixedStr(0xA0, 32);
+            material.GrassMaterial = reader.FixedStr(0xC0, 40);
+            material.TextureName = reader.FixedStr(0xE8, 32);
+            if (string.IsNullOrEmpty(material.TextureName)) material.TextureName = material.Name;
+            material.ScrollU = reader.F32(0x140);
+            material.ScrollV = reader.F32(0x144);
+            material.Flags = reader.U32(0x1E0);
+            return material;
         }
 
         public static Material Default(string name) => new Material { Name = name, TextureName = name };

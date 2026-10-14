@@ -45,11 +45,11 @@ namespace Mk2.Game
 
         public IEnumerable<string> ScriptLines()
         {
-            foreach (var f in Section.Fields)
+            foreach (var field in Section.Fields)
             {
-                foreach (var c in f.Children)
-                    if (string.Equals(c.Key, "ScriptCommand", StringComparison.OrdinalIgnoreCase) && c.Values.Count > 0)
-                        yield return $"{f.Key}: {c.JoinedValues}";
+                foreach (var command in field.Children)
+                    if (string.Equals(command.Key, "ScriptCommand", StringComparison.OrdinalIgnoreCase) && command.Values.Count > 0)
+                        yield return $"{field.Key}: {command.JoinedValues}";
             }
         }
 
@@ -93,108 +93,108 @@ namespace Mk2.Game
         /// Matrix::SetRotationPYR in the game: M = Pitch(x) * Yaw(y) * Roll(z) where each
         /// axis matrix is the transpose of System.Numerics' CreateRotationX/Y/Z.
         /// </summary>
-        public static Matrix4x4 Transform(Vector3 pos, Vector3 rot, Vector3 scale)
+        public static Matrix4x4 Transform(Vector3 pos, Vector3 rotation, Vector3 scale)
         {
-            return Matrix4x4.CreateScale(scale) * RotationPYR(rot) * Matrix4x4.CreateTranslation(pos);
+            return Matrix4x4.CreateScale(scale) * RotationPYR(rotation) * Matrix4x4.CreateTranslation(pos);
         }
 
-        public static Matrix4x4 RotationPYR(Vector3 rot) =>
-            Matrix4x4.CreateRotationX(-rot.X) * Matrix4x4.CreateRotationY(-rot.Y) * Matrix4x4.CreateRotationZ(-rot.Z);
+        public static Matrix4x4 RotationPYR(Vector3 rotation) =>
+            Matrix4x4.CreateRotationX(-rotation.X) * Matrix4x4.CreateRotationY(-rotation.Y) * Matrix4x4.CreateRotationZ(-rotation.Z);
 
         public Matrix4x4 ModelMatrix => Transform(Position, Rotation, ScaleIsVolume ? Vector3.One : Scale);
 
-        public static LevelObject FromSection(BniSection s, string chunk, int index, ModelDb db)
+        public static LevelObject FromSection(BniSection section, string chunk, int index, ModelDb modelDb)
         {
-            var o = new LevelObject { ClassName = s.Name, ChunkName = chunk, Index = index, Section = s };
-            o.Position = Vec(s.Field("pos")) ?? Vector3.Zero;
-            o.Rotation = Vec(s.Field("rot")) ?? Vector3.Zero;
-            o.Scale = Vec(s.Field("scale")) ?? Vector3.One;
-            o.Color = Vec(s.Field("color"));
-            var id = s.Field("ID");
+            var levelObject = new LevelObject { ClassName = section.Name, ChunkName = chunk, Index = index, Section = section };
+            levelObject.Position = Vec(section.Field("pos")) ?? Vector3.Zero;
+            levelObject.Rotation = Vec(section.Field("rot")) ?? Vector3.Zero;
+            levelObject.Scale = Vec(section.Field("scale")) ?? Vector3.One;
+            levelObject.Color = Vec(section.Field("color"));
+            var id = section.Field("ID");
             if (id != null)
             {
-                o.Id = Bni.ParseInt(id.Value);
-                o.IdName = id.Values.Count > 1 ? id.Values[1] : null;
+                levelObject.Id = Bni.ParseInt(id.Value);
+                levelObject.IdName = id.Values.Count > 1 ? id.Values[1] : null;
             }
-            o.Zone = s.Get("zone");
-            o.Category = Categorize(s.Name, db);
-            if (o.Category == ObjectCategory.Critter && (Math.Abs(o.Scale.X) > 20 || Math.Abs(o.Scale.Y) > 20 || Math.Abs(o.Scale.Z) > 20))
+            levelObject.Zone = section.Get("zone");
+            levelObject.Category = Categorize(section.Name, modelDb);
+            if (levelObject.Category == ObjectCategory.Critter && (Math.Abs(levelObject.Scale.X) > 20 || Math.Abs(levelObject.Scale.Y) > 20 || Math.Abs(levelObject.Scale.Z) > 20))
             {
-                o.ScaleIsVolume = true;
-                o.Shapes.Add(new ObjectShape { Kind = ShapeKind.Box, Label = "swarm volume", Center = o.Position, Rotation = o.Rotation, Size = o.Scale });
+                levelObject.ScaleIsVolume = true;
+                levelObject.Shapes.Add(new ObjectShape { Kind = ShapeKind.Box, Label = "swarm volume", Center = levelObject.Position, Rotation = levelObject.Rotation, Size = levelObject.Scale });
             }
 
-            foreach (var f in s.Fields) CollectShapes(o, f);
-            return o;
+            foreach (var node in section.Fields) CollectShapes(levelObject, node);
+            return levelObject;
         }
 
-        private static void CollectShapes(LevelObject o, BniNode f)
+        private static void CollectShapes(LevelObject levelObject, BniNode node)
         {
-            string k = f.Key?.ToLowerInvariant();
-            switch (k)
+            string key = node.Key?.ToLowerInvariant();
+            switch (key)
             {
                 case "box":
                 {
-                    var c = Vec(f.Child("pos")) ?? o.Position;
-                    o.Shapes.Add(new ObjectShape
+                    var center = Vec(node.Child("pos")) ?? levelObject.Position;
+                    levelObject.Shapes.Add(new ObjectShape
                     {
-                        Kind = ShapeKind.Box, Label = "box", Center = c,
-                        Rotation = Vec(f.Child("rot")) ?? Vector3.Zero,
-                        Size = Vec(f.Child("scale")) ?? new Vector3(100),
+                        Kind = ShapeKind.Box, Label = "box", Center = center,
+                        Rotation = Vec(node.Child("rot")) ?? Vector3.Zero,
+                        Size = Vec(node.Child("scale")) ?? new Vector3(100),
                     });
                     break;
                 }
                 case "sphere":
                 case "dummysphere":
                 {
-                    var c = Vec(f.Child("pos")) ?? o.Position;
-                    float r = Bni.ParseFloat(f.Get("radius"), 100);
-                    o.Shapes.Add(new ObjectShape { Kind = ShapeKind.Sphere, Label = f.Key, Center = c, Radius = r });
+                    var center = Vec(node.Child("pos")) ?? levelObject.Position;
+                    float radius = Bni.ParseFloat(node.Get("radius"), 100);
+                    levelObject.Shapes.Add(new ObjectShape { Kind = ShapeKind.Sphere, Label = node.Key, Center = center, Radius = radius });
                     break;
                 }
                 case "waypoints":
                 case "wallpoints":
                 case "region":
                 {
-                    var pts = f.Children.Where(c => string.Equals(c.Key, "waypoint", StringComparison.OrdinalIgnoreCase))
-                                        .Select(Vec).Where(v => v.HasValue).Select(v => v.Value).ToList();
-                    if (pts.Count == 0) break;
-                    bool closed = k == "region" || o.Category == ObjectCategory.Volume || o.Category == ObjectCategory.Trigger
-                                  || o.ClassName.Contains("Region", StringComparison.OrdinalIgnoreCase);
-                    var sh = new ObjectShape { Kind = closed ? ShapeKind.Polygon : ShapeKind.Polyline, Label = f.Key, Center = o.Position };
-                    sh.Points.AddRange(pts);
-                    o.Shapes.Add(sh);
+                    var points = node.Children.Where(child => string.Equals(child.Key, "waypoint", StringComparison.OrdinalIgnoreCase))
+                                        .Select(Vec).Where(point => point.HasValue).Select(point => point.Value).ToList();
+                    if (points.Count == 0) break;
+                    bool closed = key == "region" || levelObject.Category == ObjectCategory.Volume || levelObject.Category == ObjectCategory.Trigger
+                                  || levelObject.ClassName.Contains("Region", StringComparison.OrdinalIgnoreCase);
+                    var shape = new ObjectShape { Kind = closed ? ShapeKind.Polygon : ShapeKind.Polyline, Label = node.Key, Center = levelObject.Position };
+                    shape.Points.AddRange(points);
+                    levelObject.Shapes.Add(shape);
                     break;
                 }
                 case "camera":
                 {
-                    var src = Vec(f.Child("cameraSource"));
-                    var tgt = Vec(f.Child("cameraTarget"));
-                    if (src.HasValue && tgt.HasValue)
+                    var source = Vec(node.Child("cameraSource"));
+                    var target = Vec(node.Child("cameraTarget"));
+                    if (source.HasValue && target.HasValue)
                     {
-                        var sh = new ObjectShape { Kind = ShapeKind.CameraLine, Label = "camera", Center = src.Value };
-                        sh.Points.Add(src.Value); sh.Points.Add(tgt.Value);
-                        o.Shapes.Add(sh);
+                        var shape = new ObjectShape { Kind = ShapeKind.CameraLine, Label = "camera", Center = source.Value };
+                        shape.Points.Add(source.Value); shape.Points.Add(target.Value);
+                        levelObject.Shapes.Add(shape);
                     }
                     break;
                 }
                 case "spawnpos":
                 {
-                    var p = Vec(f);
-                    if (p.HasValue) o.Shapes.Add(new ObjectShape { Kind = ShapeKind.Sphere, Label = "spawn", Center = p.Value, Radius = 60 });
+                    var position = Vec(node);
+                    if (position.HasValue) levelObject.Shapes.Add(new ObjectShape { Kind = ShapeKind.Sphere, Label = "spawn", Center = position.Value, Radius = 60 });
                     break;
                 }
             }
-            if (o.ClassName.Equals("CollideBox", StringComparison.OrdinalIgnoreCase) || o.ClassName.Equals("CameraCollideProp", StringComparison.OrdinalIgnoreCase))
+            if (levelObject.ClassName.Equals("CollideBox", StringComparison.OrdinalIgnoreCase) || levelObject.ClassName.Equals("CameraCollideProp", StringComparison.OrdinalIgnoreCase))
             {
-                if (k == "scale")
-                    o.Shapes.Add(new ObjectShape { Kind = ShapeKind.Box, Label = "collide box (100u * scale, unverified)", Center = o.Position, Rotation = o.Rotation, Size = o.Scale * 100f });
+                if (key == "scale")
+                    levelObject.Shapes.Add(new ObjectShape { Kind = ShapeKind.Box, Label = "collide box (100u * scale, unverified)", Center = levelObject.Position, Rotation = levelObject.Rotation, Size = levelObject.Scale * 100f });
             }
         }
 
-        public static ObjectCategory Categorize(string cls, ModelDb db)
+        public static ObjectCategory Categorize(string className, ModelDb modelDb)
         {
-            bool Has(string s) => cls.Contains(s, StringComparison.OrdinalIgnoreCase);
+            bool Has(string part) => className.Contains(part, StringComparison.OrdinalIgnoreCase);
             if (Has("Trigger")) return ObjectCategory.Trigger;
             if (Has("Checkpoint")) return ObjectCategory.Checkpoint;
             if (Has("Spline") || Has("Path") || Has("GraphNode")) return ObjectCategory.Path;
@@ -204,21 +204,21 @@ namespace Mk2.Game
             if (Has("Sound")) return ObjectCategory.Sound;
             if (Has("Script") || Has("Counter") || Has("Hint") || Has("Lesson") || Has("CutScene") || Has("Emitter") || Has("PropPool") || Has("ChunkProp"))
                 return ObjectCategory.Logic;
-            if (db != null)
+            if (modelDb != null)
             {
-                foreach (var a in db.AliasChain(cls))
-                    if (a.Contains("Critter", StringComparison.OrdinalIgnoreCase) || a.Contains("Flicker", StringComparison.OrdinalIgnoreCase)
-                        || a.Contains("Bird", StringComparison.OrdinalIgnoreCase) || a.Contains("Swarm", StringComparison.OrdinalIgnoreCase))
+                foreach (var alias in modelDb.AliasChain(className))
+                    if (alias.Contains("Critter", StringComparison.OrdinalIgnoreCase) || alias.Contains("Flicker", StringComparison.OrdinalIgnoreCase)
+                        || alias.Contains("Bird", StringComparison.OrdinalIgnoreCase) || alias.Contains("Swarm", StringComparison.OrdinalIgnoreCase))
                         return ObjectCategory.Critter;
             }
-            if (cls.StartsWith("C0", StringComparison.OrdinalIgnoreCase)) return ObjectCategory.Critter;
+            if (className.StartsWith("C0", StringComparison.OrdinalIgnoreCase)) return ObjectCategory.Critter;
             return ObjectCategory.Prop;
         }
 
-        private static Vector3? Vec(BniNode n)
+        private static Vector3? Vec(BniNode node)
         {
-            if (n == null || n.Values.Count < 3) return null;
-            return new Vector3(Bni.ParseFloat(n.Values[0]), Bni.ParseFloat(n.Values[1]), Bni.ParseFloat(n.Values[2]));
+            if (node == null || node.Values.Count < 3) return null;
+            return new Vector3(Bni.ParseFloat(node.Values[0]), Bni.ParseFloat(node.Values[1]), Bni.ParseFloat(node.Values[2]));
         }
     }
 }

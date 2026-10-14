@@ -203,7 +203,7 @@ namespace Mk2.Viewer {
             float rowDepth = 0;
             float rowWidth = Math.Max(20000, placedMax.X - placedMin.X);
             int index = 0;
-            foreach (var model in loose.OrderBy(model => model.Name, StringComparer.OrdinalIgnoreCase)) {
+            foreach (var model in loose.OrderBy(candidate => candidate.Name, StringComparer.OrdinalIgnoreCase)) {
                 var size = model.Model.BoundsSize;
                 float width = Math.Max(size.X, 200) + 300;
                 if (cursorX - rowStart + width > rowWidth) { cursorX = rowStart; cursorZ += rowDepth + 300; rowDepth = 0; }
@@ -415,7 +415,7 @@ namespace Mk2.Viewer {
         public void ExportLayouts(string folder) {
             if (Scene == null) return;
             int count = 0;
-            foreach (var chunk in Scene.Chunks.Where(chunk => chunk.Layout != null)) {
+            foreach (var chunk in Scene.Chunks.Where(candidate => candidate.Layout != null)) {
                 File.WriteAllText(Path.Combine(folder, chunk.Def.Name + ".lc3.txt"), chunk.Layout.ToText());
                 count++;
             }

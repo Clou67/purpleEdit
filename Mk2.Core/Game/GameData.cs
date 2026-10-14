@@ -9,14 +9,14 @@ namespace Mk2.Game
     public sealed class GameData
     {
         public string Root { get; }
-        public IReadOnlyList<RkvArchive> Archives => _archives;
-        public IReadOnlyDictionary<string, RkvArchive> ChunkPacks => _bpkByName;
+        public IReadOnlyList<RkvArchive> Archives => archives;
+        public IReadOnlyDictionary<string, RkvArchive> ChunkPacks => bpkByName;
         public List<string> Log { get; } = new();
 
-        private readonly Dictionary<string, string> _loose = new(StringComparer.OrdinalIgnoreCase);
-        private readonly List<RkvArchive> _archives = new();
-        private readonly Dictionary<string, RkvArchive> _bpkByName = new(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, List<(RkvArchive arc, RkvArchive.Entry e)>> _archived =
+        private readonly Dictionary<string, string> looseFiles = new(StringComparer.OrdinalIgnoreCase);
+        private readonly List<RkvArchive> archives = new();
+        private readonly Dictionary<string, RkvArchive> bpkByName = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, List<(RkvArchive arc, RkvArchive.Entry e)>> archivedFiles =
             new(StringComparer.OrdinalIgnoreCase);
 
         private static readonly HashSet<string> SkipDirs = new(StringComparer.OrdinalIgnoreCase)
@@ -36,66 +36,66 @@ namespace Mk2.Game
             files.Sort(StringComparer.OrdinalIgnoreCase);
 
             // Pass 1: loose chunk packs (.BPK). Pass 2: full archives (.RKV). Pass 3: loose files.
-            var packs = files.Where(f => f.EndsWith(".bpk", StringComparison.OrdinalIgnoreCase))
-                             .OrderBy(f => f.Contains("extracted", StringComparison.OrdinalIgnoreCase) ? 0 : 1).ToList();
-            var rkvs = files.Where(f => f.EndsWith(".rkv", StringComparison.OrdinalIgnoreCase)).ToList();
-            foreach (var f in packs.Concat(rkvs))
+            var packs = files.Where(file => file.EndsWith(".bpk", StringComparison.OrdinalIgnoreCase))
+                             .OrderBy(file => file.Contains("extracted", StringComparison.OrdinalIgnoreCase) ? 0 : 1).ToList();
+            var rkvs = files.Where(file => file.EndsWith(".rkv", StringComparison.OrdinalIgnoreCase)).ToList();
+            foreach (var file in packs.Concat(rkvs))
             {
-                bool isPack = f.EndsWith(".bpk", StringComparison.OrdinalIgnoreCase);
+                bool isPack = file.EndsWith(".bpk", StringComparison.OrdinalIgnoreCase);
                 try
                 {
-                    progress?.Invoke("Indexing " + Path.GetFileName(f));
-                    var a = RkvArchive.Open(f, loadIntoMemory: false);
-                    _archives.Add(a);
+                    progress?.Invoke("Indexing " + Path.GetFileName(file));
+                    var archive = RkvArchive.Open(file, loadIntoMemory: false);
+                    archives.Add(archive);
                     if (isPack)
                     {
-                        string chunk = Path.GetFileNameWithoutExtension(f);
-                        _bpkByName.TryAdd(chunk, a);
+                        string chunk = Path.GetFileNameWithoutExtension(file);
+                        bpkByName.TryAdd(chunk, archive);
                     }
-                    foreach (var e in a.Entries)
+                    foreach (var entry in archive.Entries)
                     {
-                        if (e.Extension == ".bpk")
+                        if (entry.Extension == ".bpk")
                         {
                             // BPK nested inside a full RKV: materialise lazily on first use.
-                            string chunk = Path.GetFileNameWithoutExtension(e.Name);
-                            if (!_bpkByName.ContainsKey(chunk)) _lazyPacks.TryAdd(chunk, (a, e));
+                            string chunk = Path.GetFileNameWithoutExtension(entry.Name);
+                            if (!bpkByName.ContainsKey(chunk)) lazyPacks.TryAdd(chunk, (archive, entry));
                             continue;
                         }
-                        AddArchived(a, e);
+                        AddArchived(archive, entry);
                     }
                 }
-                catch (Exception ex) { Log.Add($"{Path.GetFileName(f)}: {ex.Message}"); }
+                catch (Exception exception) { Log.Add($"{Path.GetFileName(file)}: {exception.Message}"); }
             }
-            foreach (var f in files)
+            foreach (var file in files)
             {
-                string ext = Path.GetExtension(f);
-                if (!AssetExt.Contains(ext)) continue;
-                string name = Path.GetFileName(f);
-                if (!_loose.TryGetValue(name, out var prev)
-                    || (f.Contains("extracted", StringComparison.OrdinalIgnoreCase) && !prev.Contains("extracted", StringComparison.OrdinalIgnoreCase)))
-                    _loose[name] = f;
+                string extension = Path.GetExtension(file);
+                if (!AssetExt.Contains(extension)) continue;
+                string name = Path.GetFileName(file);
+                if (!looseFiles.TryGetValue(name, out var prev)
+                    || (file.Contains("extracted", StringComparison.OrdinalIgnoreCase) && !prev.Contains("extracted", StringComparison.OrdinalIgnoreCase)))
+                    looseFiles[name] = file;
             }
-            Log.Add($"Indexed {_loose.Count} loose files, {_archives.Count} archives, {_bpkByName.Count} chunk packs");
+            Log.Add($"Indexed {looseFiles.Count} loose files, {archives.Count} archives, {bpkByName.Count} chunk packs");
         }
 
-        private readonly Dictionary<string, (RkvArchive arc, RkvArchive.Entry e)> _lazyPacks = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, (RkvArchive arc, RkvArchive.Entry e)> lazyPacks = new(StringComparer.OrdinalIgnoreCase);
 
-        private void AddArchived(RkvArchive a, RkvArchive.Entry e)
+        private void AddArchived(RkvArchive archive, RkvArchive.Entry entry)
         {
-            if (!_archived.TryGetValue(e.Name, out var list)) _archived[e.Name] = list = new();
-            list.Add((a, e));
+            if (!archivedFiles.TryGetValue(entry.Name, out var list)) archivedFiles[entry.Name] = list = new();
+            list.Add((archive, entry));
         }
 
-        private static void Collect(string dir, List<string> files, int depth)
+        private static void Collect(string folder, List<string> files, int depth)
         {
             if (depth > 12) return;
             try
             {
-                foreach (var f in Directory.EnumerateFiles(dir)) files.Add(f);
-                foreach (var d in Directory.EnumerateDirectories(dir))
+                foreach (var file in Directory.EnumerateFiles(folder)) files.Add(file);
+                foreach (var directory in Directory.EnumerateDirectories(folder))
                 {
-                    if (SkipDirs.Contains(Path.GetFileName(d))) continue;
-                    Collect(d, files, depth + 1);
+                    if (SkipDirs.Contains(Path.GetFileName(directory))) continue;
+                    Collect(directory, files, depth + 1);
                 }
             }
             catch (UnauthorizedAccessException) { }
@@ -103,8 +103,8 @@ namespace Mk2.Game
         }
 
         public bool Exists(string fileName, IEnumerable<RkvArchive> preferred = null) =>
-            (preferred != null && preferred.Any(a => a != null && a.Contains(fileName)))
-            || _loose.ContainsKey(fileName) || _archived.ContainsKey(fileName);
+            (preferred != null && preferred.Any(archive => archive != null && archive.Contains(fileName)))
+            || looseFiles.ContainsKey(fileName) || archivedFiles.ContainsKey(fileName);
 
         /// <summary>
         /// Reads a file by name. Search order: preferred archives (e.g. the chunk's own BPK),
@@ -114,69 +114,69 @@ namespace Mk2.Game
         {
             if (string.IsNullOrEmpty(fileName)) return null;
             if (preferred != null)
-                foreach (var a in preferred)
+                foreach (var archive in preferred)
                 {
-                    if (a == null) continue;
-                    var e = a.Find(fileName);
-                    if (e != null) return a.Read(e);
+                    if (archive == null) continue;
+                    var entry = archive.Find(fileName);
+                    if (entry != null) return archive.Read(entry);
                 }
-            if (_loose.TryGetValue(fileName, out var path)) return File.ReadAllBytes(path);
-            if (_archived.TryGetValue(fileName, out var list) && list.Count > 0) return list[0].arc.Read(list[0].e);
+            if (looseFiles.TryGetValue(fileName, out var path)) return File.ReadAllBytes(path);
+            if (archivedFiles.TryGetValue(fileName, out var list) && list.Count > 0) return list[0].arc.Read(list[0].e);
             return null;
         }
 
         public string Describe(string fileName, IEnumerable<RkvArchive> preferred = null)
         {
             if (preferred != null)
-                foreach (var a in preferred)
-                    if (a != null && a.Contains(fileName)) return Path.GetFileName(a.SourcePath);
-            if (_loose.TryGetValue(fileName, out var path)) return Path.GetRelativePath(Root, path);
-            if (_archived.TryGetValue(fileName, out var list) && list.Count > 0) return Path.GetFileName(list[0].arc.SourcePath);
+                foreach (var archive in preferred)
+                    if (archive != null && archive.Contains(fileName)) return Path.GetFileName(archive.SourcePath);
+            if (looseFiles.TryGetValue(fileName, out var path)) return Path.GetRelativePath(Root, path);
+            if (archivedFiles.TryGetValue(fileName, out var list) && list.Count > 0) return Path.GetFileName(list[0].arc.SourcePath);
             return "(missing)";
         }
 
         public IEnumerable<string> AllNames(string extension = null)
         {
-            var set = new HashSet<string>(_loose.Keys, StringComparer.OrdinalIgnoreCase);
-            set.UnionWith(_archived.Keys);
-            return extension == null ? set : set.Where(n => n.EndsWith(extension, StringComparison.OrdinalIgnoreCase));
+            var set = new HashSet<string>(looseFiles.Keys, StringComparer.OrdinalIgnoreCase);
+            set.UnionWith(archivedFiles.Keys);
+            return extension == null ? set : set.Where(name => name.EndsWith(extension, StringComparison.OrdinalIgnoreCase));
         }
 
         public RkvArchive ChunkPack(string chunkName)
         {
             if (string.IsNullOrEmpty(chunkName)) return null;
-            if (_bpkByName.TryGetValue(chunkName, out var a)) return a;
-            if (_lazyPacks.TryGetValue(chunkName, out var lz))
+            if (bpkByName.TryGetValue(chunkName, out var archive)) return archive;
+            if (lazyPacks.TryGetValue(chunkName, out var lazyPack))
             {
                 try
                 {
-                    var inner = RkvArchive.FromBytes(lz.arc.Read(lz.e), lz.arc.SourcePath + "|" + lz.e.Name);
-                    _archives.Add(inner);
-                    _bpkByName[chunkName] = inner;
-                    foreach (var e in inner.Entries) AddArchived(inner, e);
+                    var inner = RkvArchive.FromBytes(lazyPack.arc.Read(lazyPack.e), lazyPack.arc.SourcePath + "|" + lazyPack.e.Name);
+                    archives.Add(inner);
+                    bpkByName[chunkName] = inner;
+                    foreach (var entry in inner.Entries) AddArchived(inner, entry);
                     return inner;
                 }
-                catch (Exception ex) { Log.Add($"{lz.e.Name}: {ex.Message}"); }
+                catch (Exception exception) { Log.Add($"{lazyPack.e.Name}: {exception.Message}"); }
             }
             return null;
         }
 
-        public IEnumerable<string> ChunkPackNames => _bpkByName.Keys.Concat(_lazyPacks.Keys).Distinct(StringComparer.OrdinalIgnoreCase);
+        public IEnumerable<string> ChunkPackNames => bpkByName.Keys.Concat(lazyPacks.Keys).Distinct(StringComparer.OrdinalIgnoreCase);
 
         public BniFile ReadBni(string fileName, IEnumerable<RkvArchive> preferred = null)
         {
-            var d = Read(fileName, preferred);
-            return d == null ? null : BniFile.Parse(d, fileName);
+            var data = Read(fileName, preferred);
+            return data == null ? null : BniFile.Parse(data, fileName);
         }
 
         /// <summary>Find the folder that most likely holds the game data under a user-picked folder.</summary>
-        public static bool LooksLikeGameRoot(string dir)
+        public static bool LooksLikeGameRoot(string directory)
         {
             try
             {
-                return Directory.EnumerateFiles(dir, "levels.ini.bni", SearchOption.AllDirectories).Any()
-                    || Directory.EnumerateFiles(dir, "*.BPK", SearchOption.AllDirectories).Any()
-                    || Directory.EnumerateFiles(dir, "*.RKV", SearchOption.AllDirectories).Any();
+                return Directory.EnumerateFiles(directory, "levels.ini.bni", SearchOption.AllDirectories).Any()
+                    || Directory.EnumerateFiles(directory, "*.BPK", SearchOption.AllDirectories).Any()
+                    || Directory.EnumerateFiles(directory, "*.RKV", SearchOption.AllDirectories).Any();
             }
             catch { return false; }
         }

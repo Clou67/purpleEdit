@@ -22,42 +22,42 @@ namespace Mk2.Formats
         public string JoinedValues => string.Join(" ", Values);
 
         public BniNode Child(string key) =>
-            Children.FirstOrDefault(c => string.Equals(c.Key, key, StringComparison.OrdinalIgnoreCase));
+            Children.FirstOrDefault(node => string.Equals(node.Key, key, StringComparison.OrdinalIgnoreCase));
 
         public IEnumerable<BniNode> ChildrenNamed(string key) =>
-            Children.Where(c => string.Equals(c.Key, key, StringComparison.OrdinalIgnoreCase));
+            Children.Where(node => string.Equals(node.Key, key, StringComparison.OrdinalIgnoreCase));
 
         public string Get(string key) => Child(key)?.Value;
 
-        public float GetFloat(string key, int index = 0, float def = 0)
+        public float GetFloat(string key, int index = 0, float fallback = 0)
         {
-            var c = Child(key);
-            if (c == null || c.Values.Count <= index) return def;
-            return Bni.ParseFloat(c.Values[index], def);
+            var node = Child(key);
+            if (node == null || node.Values.Count <= index) return fallback;
+            return Bni.ParseFloat(node.Values[index], fallback);
         }
 
-        public bool TryGetVec3(string key, out float x, out float y, out float z)
+        public bool TryGetVec3(string key, out float xValue, out float yValue, out float zValue)
         {
-            x = y = z = 0;
-            var c = Child(key);
-            if (c == null || c.Values.Count < 3) return false;
-            x = Bni.ParseFloat(c.Values[0]);
-            y = Bni.ParseFloat(c.Values[1]);
-            z = Bni.ParseFloat(c.Values[2]);
+            xValue = yValue = zValue = 0;
+            var node = Child(key);
+            if (node == null || node.Values.Count < 3) return false;
+            xValue = Bni.ParseFloat(node.Values[0]);
+            yValue = Bni.ParseFloat(node.Values[1]);
+            zValue = Bni.ParseFloat(node.Values[2]);
             return true;
         }
 
         public override string ToString()
         {
-            var sb = new StringBuilder();
-            if (Section != null) sb.Append("name ").Append(Section).Append(' ');
+            var text = new StringBuilder();
+            if (Section != null) text.Append("name ").Append(Section).Append(' ');
             if (Key != null)
             {
-                sb.Append(Key);
-                foreach (var v in Values) sb.Append(' ').Append(v);
-                if (Mask != null) sb.Append(" \\").Append(Mask).Append('\\');
+                text.Append(Key);
+                foreach (var value in Values) text.Append(' ').Append(value);
+                if (Mask != null) text.Append(" \\").Append(Mask).Append('\\');
             }
-            return sb.ToString().TrimEnd();
+            return text.ToString().TrimEnd();
         }
     }
 
@@ -73,9 +73,9 @@ namespace Mk2.Formats
         public int Index;
 
         public BniNode Field(string key) =>
-            Fields.FirstOrDefault(c => string.Equals(c.Key, key, StringComparison.OrdinalIgnoreCase));
+            Fields.FirstOrDefault(node => string.Equals(node.Key, key, StringComparison.OrdinalIgnoreCase));
         public IEnumerable<BniNode> FieldsNamed(string key) =>
-            Fields.Where(c => string.Equals(c.Key, key, StringComparison.OrdinalIgnoreCase));
+            Fields.Where(node => string.Equals(node.Key, key, StringComparison.OrdinalIgnoreCase));
         public string Get(string key) => Field(key)?.Value;
     }
 
@@ -104,51 +104,51 @@ namespace Mk2.Formats
         public List<BniNode> Roots = new();
         public bool BigEndian;
 
-        private List<BniSection> _sections;
+        private List<BniSection> sections;
 
         public static BniFile Parse(byte[] data, string name = null)
         {
-            bool le = data[0x20] == 0x64;
-            var b = new Bin(data, !le);
-            var f = new BniFile { BigEndian = !le, Name = name };
-            f.SourcePath = b.CStr(0, 0x20);
-            int lineCount = b.S32(0x24);
-            int st = 0x44 + b.S32(0x2C);
-            int sh = 0x44 + b.S32(0x30);
+            bool littleEndian = data[0x20] == 0x64;
+            var reader = new Bin(data, !littleEndian);
+            var bniFile = new BniFile { BigEndian = !littleEndian, Name = name };
+            bniFile.SourcePath = reader.CStr(0, 0x20);
+            int lineCount = reader.S32(0x24);
+            int stringTable = 0x44 + reader.S32(0x2C);
+            int shortTable = 0x44 + reader.S32(0x30);
 
-            string Str(int idx) => b.CStr(st + idx * 4);
+            string Str(int stringIndex) => reader.CStr(stringTable + stringIndex * 4);
 
             var visited = new bool[lineCount];
             List<BniNode> Walk(int start, BniNode parent, int depth)
             {
                 var list = new List<BniNode>();
                 if (depth > 64) return list;
-                for (int i = start; i < lineCount; i++)
+                for (int index = start; index < lineCount; index++)
                 {
-                    int o = 0x44 + i * 0x10;
-                    ushort cnt = b.U16(o);
-                    if (cnt == 0xFFFF) break;
-                    if (visited[i]) break;
-                    visited[i] = true;
-                    ushort sec = b.U16(o + 2), fld = b.U16(o + 4), first = b.U16(o + 6),
-                           child = b.U16(o + 8), mask = b.U16(o + 10);
-                    var n = new BniNode { Parent = parent };
-                    if (sec != 0xFFFF) n.Section = Str(sec);
-                    if (fld != 0xFFFF)
+                    int offset = 0x44 + index * 0x10;
+                    ushort valueCount = reader.U16(offset);
+                    if (valueCount == 0xFFFF) break;
+                    if (visited[index]) break;
+                    visited[index] = true;
+                    ushort sectionName = reader.U16(offset + 2), fieldName = reader.U16(offset + 4), first = reader.U16(offset + 6),
+                           child = reader.U16(offset + 8), mask = reader.U16(offset + 10);
+                    var node = new BniNode { Parent = parent };
+                    if (sectionName != 0xFFFF) node.Section = Str(sectionName);
+                    if (fieldName != 0xFFFF)
                     {
-                        n.Key = Str(fld);
-                        for (int k = 0; k < cnt; k++)
-                            n.Values.Add(Str(b.U16(sh + (first + k) * 2)));
-                        if (mask != 0xFFFF) n.Mask = Str(mask);
+                        node.Key = Str(fieldName);
+                        for (int valueIndex = 0; valueIndex < valueCount; valueIndex++)
+                            node.Values.Add(Str(reader.U16(shortTable + (first + valueIndex) * 2)));
+                        if (mask != 0xFFFF) node.Mask = Str(mask);
                     }
                     if (child != 0xFFFF && child < lineCount)
-                        n.Children = Walk(child, n, depth + 1);
-                    list.Add(n);
+                        node.Children = Walk(child, node, depth + 1);
+                    list.Add(node);
                 }
                 return list;
             }
-            f.Roots = Walk(0, null, 0);
-            return f;
+            bniFile.Roots = Walk(0, null, 0);
+            return bniFile;
         }
 
         public static BniFile Load(string path) => Parse(File.ReadAllBytes(path), Path.GetFileName(path));
@@ -158,54 +158,54 @@ namespace Mk2.Formats
         {
             get
             {
-                if (_sections != null) return _sections;
-                _sections = new List<BniSection>();
-                BniSection cur = null;
-                foreach (var n in Roots)
+                if (sections != null) return sections;
+                sections = new List<BniSection>();
+                BniSection current = null;
+                foreach (var node in Roots)
                 {
-                    if (n.IsSection)
+                    if (node.IsSection)
                     {
-                        cur = new BniSection { Name = n.Section, Header = n, Index = _sections.Count };
-                        if (n.Key != null) cur.Fields.Add(new BniNode { Key = n.Key, Values = n.Values, Mask = n.Mask });
-                        cur.Fields.AddRange(n.Children);
-                        _sections.Add(cur);
+                        current = new BniSection { Name = node.Section, Header = node, Index = sections.Count };
+                        if (node.Key != null) current.Fields.Add(new BniNode { Key = node.Key, Values = node.Values, Mask = node.Mask });
+                        current.Fields.AddRange(node.Children);
+                        sections.Add(current);
                     }
-                    else if (cur != null && cur.Header.Children.Count == 0)
+                    else if (current != null && current.Header.Children.Count == 0)
                     {
-                        cur.Fields.Add(n);
+                        current.Fields.Add(node);
                     }
                 }
-                return _sections;
+                return sections;
             }
         }
 
         public string ToText()
         {
-            var sb = new StringBuilder();
-            sb.AppendLine(SourcePath);
-            void W(BniNode n, int d)
+            var text = new StringBuilder();
+            text.AppendLine(SourcePath);
+            void WriteNode(BniNode node, int depth)
             {
-                if (n.IsSection && d == 0) sb.AppendLine();
-                sb.Append(' ', d * 2).AppendLine(n.ToString());
-                foreach (var c in n.Children) W(c, d + 1);
+                if (node.IsSection && depth == 0) text.AppendLine();
+                text.Append(' ', depth * 2).AppendLine(node.ToString());
+                foreach (var child in node.Children) WriteNode(child, depth + 1);
             }
-            foreach (var r in Roots) W(r, 0);
-            return sb.ToString();
+            foreach (var root in Roots) WriteNode(root, 0);
+            return text.ToString();
         }
     }
 
     public static class Bni
     {
-        public static float ParseFloat(string s, float def = 0)
+        public static float ParseFloat(string text, float fallback = 0)
         {
-            if (string.IsNullOrEmpty(s)) return def;
-            return float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : def;
+            if (string.IsNullOrEmpty(text)) return fallback;
+            return float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ? value : fallback;
         }
 
-        public static int ParseInt(string s, int def = 0)
+        public static int ParseInt(string text, int fallback = 0)
         {
-            if (string.IsNullOrEmpty(s)) return def;
-            return int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : def;
+            if (string.IsNullOrEmpty(text)) return fallback;
+            return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : fallback;
         }
     }
 }

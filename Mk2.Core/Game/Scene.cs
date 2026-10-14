@@ -33,12 +33,12 @@ namespace Mk2.Game
         public List<string> Warnings = new();
         public AssetCache Assets;
 
-        public IEnumerable<LevelObject> AllObjects => Chunks.SelectMany(c => c.Objects);
+        public IEnumerable<LevelObject> AllObjects => Chunks.SelectMany(chunk => chunk.Objects);
 
-        public LoadedModel ModelFor(LevelObject o)
+        public LoadedModel ModelFor(LevelObject levelObject)
         {
-            foreach (var c in Chunks)
-                if (c.ObjectModels.TryGetValue(o, out var m)) return m;
+            foreach (var chunk in Chunks)
+                if (chunk.ObjectModels.TryGetValue(levelObject, out var loadedModel)) return loadedModel;
             return null;
         }
     }
@@ -47,9 +47,9 @@ namespace Mk2.Game
     public sealed class AssetCache
     {
         public readonly GameData Game;
-        private readonly Dictionary<string, LoadedModel> _models = new(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, Material> _materials = new(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, Texture> _textures = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, LoadedModel> models = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Material> materials = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Texture> textures = new(StringComparer.OrdinalIgnoreCase);
         public List<string> Warnings { get; } = new();
 
         public AssetCache(GameData game) { Game = game; }
@@ -57,104 +57,104 @@ namespace Mk2.Game
         public LoadedModel GetModel(string name, IList<RkvArchive> packs)
         {
             if (string.IsNullOrEmpty(name)) return null;
-            if (_models.TryGetValue(name, out var cached)) return cached;
+            if (models.TryGetValue(name, out var cached)) return cached;
             var mdl = Game.Read(name + ".mdl", packs);
             var mdg = Game.Read(name + ".mdg", packs);
-            if (mdl == null || mdg == null) { _models[name] = null; return null; }
-            LoadedModel lm;
+            if (mdl == null || mdg == null) { models[name] = null; return null; }
+            LoadedModel loadedModel;
             try
             {
-                lm = new LoadedModel
+                loadedModel = new LoadedModel
                 {
                     Name = name,
                     Model = Model.Load(mdl, mdg, name),
                     Source = Game.Describe(name + ".mdl", packs),
                 };
-                foreach (var w in lm.Model.Warnings) Warnings.Add($"{name}: {w}");
-                foreach (var mn in lm.Model.MaterialNames) lm.Materials.Add(GetMaterial(mn, packs));
-                for (int i = 0; i < 16; i++)
+                foreach (var warning in loadedModel.Model.Warnings) Warnings.Add($"{name}: {warning}");
+                foreach (var materialName in loadedModel.Model.MaterialNames) loadedModel.Materials.Add(GetMaterial(materialName, packs));
+                for (int index = 0; index < 16; index++)
                 {
-                    var c = Game.Read($"{name}_{i:00}.cgr", packs);
-                    if (c == null) { if (i > 0) break; else continue; }
-                    try { lm.Collisions.Add(Collision.Load(c, $"{name}_{i:00}")); } catch { }
+                    var collisionData = Game.Read($"{name}_{index:00}.cgr", packs);
+                    if (collisionData == null) { if (index > 0) break; else continue; }
+                    try { loadedModel.Collisions.Add(Collision.Load(collisionData, $"{name}_{index:00}")); } catch { }
                 }
             }
-            catch (Exception ex)
+            catch (Exception exception)
             {
-                Warnings.Add($"{name}: {ex.Message}");
-                lm = null;
+                Warnings.Add($"{name}: {exception.Message}");
+                loadedModel = null;
             }
-            _models[name] = lm;
-            return lm;
+            models[name] = loadedModel;
+            return loadedModel;
         }
 
         public Material GetMaterial(string name, IList<RkvArchive> packs)
         {
-            if (_materials.TryGetValue(name, out var m)) return m;
-            var d = Game.Read(name + ".min", packs);
-            try { m = d != null ? Material.Parse(d, name) : Material.Default(name); }
-            catch { m = Material.Default(name); }
-            _materials[name] = m;
+            if (materials.TryGetValue(name, out var material)) return material;
+            var data = Game.Read(name + ".min", packs);
+            try { material = data != null ? Material.Parse(data, name) : Material.Default(name); }
+            catch { material = Material.Default(name); }
+            materials[name] = material;
             // Pre-resolve the texture with the same pack priority.
-            GetTexture(m.TextureName, packs);
-            return m;
+            GetTexture(material.TextureName, packs);
+            return material;
         }
 
         public Texture GetTexture(string name, IList<RkvArchive> packs = null)
         {
             if (string.IsNullOrEmpty(name)) return null;
-            if (_textures.TryGetValue(name, out var t)) return t;
-            var d = Game.Read(name + ".tex", packs);
-            try { t = d != null ? Texture.Decode(d, name) : null; }
-            catch (Exception ex) { Warnings.Add($"{name}.tex: {ex.Message}"); t = null; }
-            _textures[name] = t;
-            return t;
+            if (textures.TryGetValue(name, out var texture)) return texture;
+            var data = Game.Read(name + ".tex", packs);
+            try { texture = data != null ? Texture.Decode(data, name) : null; }
+            catch (Exception exception) { Warnings.Add($"{name}.tex: {exception.Message}"); texture = null; }
+            textures[name] = texture;
+            return texture;
         }
 
-        private readonly Dictionary<string, Animation> _anims = new(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, AnimSet> _animSets = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Animation> animations = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, AnimSet> animSets = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>Loads &lt;name&gt;.anm + &lt;name&gt;.ang. Returns null when there is no .anm.</summary>
         public Animation GetAnimation(string name, IList<RkvArchive> packs = null)
         {
             if (string.IsNullOrEmpty(name)) return null;
-            if (_anims.TryGetValue(name, out var a)) return a;
+            if (animations.TryGetValue(name, out var animation)) return animation;
             var anm = Game.Read(name + ".anm", packs);
             if (anm != null)
             {
                 try
                 {
-                    a = Animation.Load(anm, Game.Read(name + ".ang", packs), name);
-                    foreach (var w in a.Warnings) Warnings.Add($"{name}.anm: {w}");
+                    animation = Animation.Load(anm, Game.Read(name + ".ang", packs), name);
+                    foreach (var warning in animation.Warnings) Warnings.Add($"{name}.anm: {warning}");
                 }
-                catch (Exception ex) { Warnings.Add($"{name}.anm: {ex.Message}"); a = null; }
+                catch (Exception exception) { Warnings.Add($"{name}.anm: {exception.Message}"); animation = null; }
             }
-            _anims[name] = a;
-            return a;
+            animations[name] = animation;
+            return animation;
         }
 
         /// <summary>Clip list from &lt;name&gt;.bbi, or one clip covering the whole timeline when there is none.</summary>
         public AnimSet GetAnimSet(string name, Animation anim, IList<RkvArchive> packs = null)
         {
             if (string.IsNullOrEmpty(name)) return null;
-            if (_animSets.TryGetValue(name, out var s)) return s;
-            var d = Game.Read(name + ".bbi", packs);
-            if (d != null)
+            if (animSets.TryGetValue(name, out var clips)) return clips;
+            var data = Game.Read(name + ".bbi", packs);
+            if (data != null)
             {
-                try { s = AnimSet.Parse(d); }
-                catch (Exception ex) { Warnings.Add($"{name}.bbi: {ex.Message}"); s = null; }
+                try { clips = AnimSet.Parse(data); }
+                catch (Exception exception) { Warnings.Add($"{name}.bbi: {exception.Message}"); clips = null; }
             }
-            if ((s == null || s.Clips.Count == 0) && anim != null) s = AnimSet.WholeTimeline(anim);
-            _animSets[name] = s;
-            return s;
+            if ((clips == null || clips.Clips.Count == 0) && anim != null) clips = AnimSet.WholeTimeline(anim);
+            animSets[name] = clips;
+            return clips;
         }
 
         public Collision GetCollision(string fileName, IList<RkvArchive> packs)
         {
-            var d = Game.Read(fileName, packs);
-            if (d == null) return null;
-            try { return Collision.Load(d, Path.GetFileNameWithoutExtension(fileName)); }
-            catch (Exception ex) { Warnings.Add($"{fileName}: {ex.Message}"); return null; }
+            var data = Game.Read(fileName, packs);
+            if (data == null) return null;
+            try { return Collision.Load(data, Path.GetFileNameWithoutExtension(fileName)); }
+            catch (Exception exception) { Warnings.Add($"{fileName}: {exception.Message}"); return null; }
         }
     }
 
@@ -162,59 +162,59 @@ namespace Mk2.Game
     {
         public static List<LevelDef> LoadLevelList(GameData game)
         {
-            var f = game.ReadBni("levels.ini.bni");
-            return f == null ? new List<LevelDef>() : LevelsIni.Parse(f);
+            var bniFile = game.ReadBni("levels.ini.bni");
+            return bniFile == null ? new List<LevelDef>() : LevelsIni.Parse(bniFile);
         }
 
-        public static LevelScene Load(GameData game, LevelDef def, ModelDb db, AssetCache cache = null,
+        public static LevelScene Load(GameData game, LevelDef level, ModelDb modelDb, AssetCache cache = null,
                                       Action<string> progress = null, ISet<string> onlyChunks = null)
         {
             cache ??= new AssetCache(game);
-            var scene = new LevelScene { Def = def, Assets = cache };
-            var envPack = game.ChunkPack(def.EnvChunk);
+            var scene = new LevelScene { Def = level, Assets = cache };
+            var envPack = game.ChunkPack(level.EnvChunk);
 
-            foreach (var cd in def.Chunks)
+            foreach (var chunkDef in level.Chunks)
             {
-                if (onlyChunks != null && !cd.IsEnvironment && !onlyChunks.Contains(cd.Name)) continue;
-                progress?.Invoke("Loading " + cd.Name);
-                var sc = new SceneChunk { Def = cd, Pack = game.ChunkPack(cd.Name) };
-                if (sc.Pack == null) scene.Warnings.Add($"{cd.Name}: chunk pack (.BPK) not found");
-                var packs = new List<RkvArchive> { sc.Pack, envPack }.Where(p => p != null).Distinct().ToList();
+                if (onlyChunks != null && !chunkDef.IsEnvironment && !onlyChunks.Contains(chunkDef.Name)) continue;
+                progress?.Invoke("Loading " + chunkDef.Name);
+                var chunk = new SceneChunk { Def = chunkDef, Pack = game.ChunkPack(chunkDef.Name) };
+                if (chunk.Pack == null) scene.Warnings.Add($"{chunkDef.Name}: chunk pack (.BPK) not found");
+                var packs = new List<RkvArchive> { chunk.Pack, envPack }.Where(pack => pack != null).Distinct().ToList();
 
-                foreach (var ov in cd.Overlays)
+                foreach (var overlay in chunkDef.Overlays)
                 {
-                    var m = cache.GetModel(ov.Name, packs);
-                    if (m == null) scene.Warnings.Add($"{cd.Name}: overlay {ov.Name} not found");
-                    sc.Overlays.Add((ov, m));
+                    var loadedModel = cache.GetModel(overlay.Name, packs);
+                    if (loadedModel == null) scene.Warnings.Add($"{chunkDef.Name}: overlay {overlay.Name} not found");
+                    chunk.Overlays.Add((overlay, loadedModel));
                 }
-                foreach (var g in cd.Grounds)
+                foreach (var ground in chunkDef.Grounds)
                 {
-                    var c = cache.GetCollision(g + "_all.cgr", packs) ?? cache.GetCollision(g + ".cgr", packs);
-                    if (c == null) scene.Warnings.Add($"{cd.Name}: ground collision {g} not found");
-                    else sc.Grounds.Add((g, c));
+                    var collision = cache.GetCollision(ground + "_all.cgr", packs) ?? cache.GetCollision(ground + ".cgr", packs);
+                    if (collision == null) scene.Warnings.Add($"{chunkDef.Name}: ground collision {ground} not found");
+                    else chunk.Grounds.Add((ground, collision));
                 }
-                if (cd.EnvDome != null) sc.EnvDome = cache.GetModel(cd.EnvDome, packs);
+                if (chunkDef.EnvDome != null) chunk.EnvDome = cache.GetModel(chunkDef.EnvDome, packs);
 
-                sc.Layout = game.ReadBni(cd.Name + ".lc3.bni", packs);
-                if (sc.Layout != null)
+                chunk.Layout = game.ReadBni(chunkDef.Name + ".lc3.bni", packs);
+                if (chunk.Layout != null)
                 {
-                    int idx = 0;
-                    foreach (var s in sc.Layout.Sections)
+                    int index = 0;
+                    foreach (var section in chunk.Layout.Sections)
                     {
-                        var o = LevelObject.FromSection(s, cd.Name, idx++, db);
-                        sc.Objects.Add(o);
-                        if (db != null && db.IsHidden(o.ClassName)) continue;
-                        if (o.Category != ObjectCategory.Prop && o.Category != ObjectCategory.Critter && o.Category != ObjectCategory.Checkpoint) continue;
-                        var cands = db?.ModelCandidates(o.ClassName) ?? new List<string> { o.ClassName };
-                        foreach (var cand in cands)
+                        var levelObject = LevelObject.FromSection(section, chunkDef.Name, index++, modelDb);
+                        chunk.Objects.Add(levelObject);
+                        if (modelDb != null && modelDb.IsHidden(levelObject.ClassName)) continue;
+                        if (levelObject.Category != ObjectCategory.Prop && levelObject.Category != ObjectCategory.Critter && levelObject.Category != ObjectCategory.Checkpoint) continue;
+                        var cands = modelDb?.ModelCandidates(levelObject.ClassName) ?? new List<string> { levelObject.ClassName };
+                        foreach (var candidate in cands)
                         {
-                            if (!game.Exists(cand + ".mdl", packs)) continue;
-                            var m = cache.GetModel(cand, packs);
-                            if (m != null) { sc.ObjectModels[o] = m; break; }
+                            if (!game.Exists(candidate + ".mdl", packs)) continue;
+                            var loadedModel = cache.GetModel(candidate, packs);
+                            if (loadedModel != null) { chunk.ObjectModels[levelObject] = loadedModel; break; }
                         }
                     }
                 }
-                scene.Chunks.Add(sc);
+                scene.Chunks.Add(chunk);
             }
             scene.Warnings.AddRange(cache.Warnings);
             return scene;
@@ -225,22 +225,22 @@ namespace Mk2.Game
         {
             cache ??= new AssetCache(game);
             var pack = game.ChunkPack(chunkName);
-            var def = new LevelDef { Name = chunkName };
-            var cd = new ChunkDef { Name = chunkName };
-            def.Chunks.Add(cd);
-            var scene = new LevelScene { Def = def, Assets = cache };
-            var sc = new SceneChunk { Def = cd, Pack = pack };
+            var level = new LevelDef { Name = chunkName };
+            var chunkDef = new ChunkDef { Name = chunkName };
+            level.Chunks.Add(chunkDef);
+            var scene = new LevelScene { Def = level, Assets = cache };
+            var chunk = new SceneChunk { Def = chunkDef, Pack = pack };
             if (pack != null)
             {
                 var packs = new List<RkvArchive> { pack };
-                foreach (var e in pack.Entries.Where(e => e.Extension == ".mdl"))
+                foreach (var entry in pack.Entries.Where(candidate => candidate.Extension == ".mdl"))
                 {
-                    string n = Path.GetFileNameWithoutExtension(e.Name);
-                    var m = cache.GetModel(n, packs);
-                    if (m != null) { cd.Overlays.Add(new OverlayRef { Name = n }); sc.Overlays.Add((cd.Overlays[^1], m)); }
+                    string name = Path.GetFileNameWithoutExtension(entry.Name);
+                    var loadedModel = cache.GetModel(name, packs);
+                    if (loadedModel != null) { chunkDef.Overlays.Add(new OverlayRef { Name = name }); chunk.Overlays.Add((chunkDef.Overlays[^1], loadedModel)); }
                 }
             }
-            scene.Chunks.Add(sc);
+            scene.Chunks.Add(chunk);
             scene.Warnings.AddRange(cache.Warnings);
             return scene;
         }

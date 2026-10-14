@@ -17,15 +17,15 @@ namespace Mk2.Viewer.Rendering
         public int SelectedBone = -1;
         public bool HasPose;
 
-        public Vector3 BoneWorld(int i) =>
-            Vector3.Transform(Globals[i].Translation, Item?.World ?? Matrix4x4.Identity);
+        public Vector3 BoneWorld(int bone) =>
+            Vector3.Transform(Globals[bone].Translation, Item?.World ?? Matrix4x4.Identity);
     }
 
     public sealed partial class SceneRenderer
     {
         public AnimationState Anim { get; private set; }
-        private GpuLines _skeletonLines;
-        private bool _skeletonDirty;
+        private GpuLines skeletonLines;
+        private bool skeletonDirty;
 
         /// <summary>
         /// Starts animating <paramref name="item"/> (null to show the skeleton alone). The item's model is
@@ -38,10 +38,10 @@ namespace Mk2.Viewer.Rendering
             {
                 var loadedModel = item.Model.Source;
                 var previous = item.Model;
-                var rebuilt = GpuModel.Build(loadedModel, _textures, anim);
+                var rebuilt = GpuModel.Build(loadedModel, textures, anim);
                 foreach (var drawItem in Items) if (drawItem.Model == previous) drawItem.Model = rebuilt;
-                _models[loadedModel] = rebuilt;
-                _pickTris.Remove(previous);
+                models[loadedModel] = rebuilt;
+                pickTriangles.Remove(previous);
                 previous.Dispose();
                 TransformBounds(rebuilt.Min, rebuilt.Max, item.World, out item.WorldMin, out item.WorldMax);
             }
@@ -59,10 +59,10 @@ namespace Mk2.Viewer.Rendering
                 // Skeleton-only scene: frame the joints.
                 var min = new Vector3(float.MaxValue);
                 var max = new Vector3(float.MinValue);
-                for (int i = 0; i < anim.Bones.Count; i++)
+                for (int index = 0; index < anim.Bones.Count; index++)
                 {
-                    min = Vector3.Min(min, Anim.Globals[i].Translation);
-                    max = Vector3.Max(max, Anim.Globals[i].Translation);
+                    min = Vector3.Min(min, Anim.Globals[index].Translation);
+                    max = Vector3.Max(max, Anim.Globals[index].Translation);
                 }
                 if (min.X <= max.X)
                 {
@@ -75,32 +75,32 @@ namespace Mk2.Viewer.Rendering
         public void ClearAnimation()
         {
             Anim = null;
-            _skeletonDirty = true;
+            skeletonDirty = true;
         }
 
         /// <summary>Poses the animated model at a frame (fractional frames interpolate; &lt; 0 = bind pose).</summary>
         public void SetPose(float frame)
         {
-            var a = Anim;
-            if (a == null) return;
-            if (a.HasPose && a.Frame == frame) return;
-            a.Anim.ComputePose(frame, a.Globals);
-            a.Anim.SkinMatrices(a.Globals, a.Skin);
-            a.Frame = frame;
-            a.HasPose = true;
-            if (a.Item != null)
+            var state = Anim;
+            if (state == null) return;
+            if (state.HasPose && state.Frame == frame) return;
+            state.Anim.ComputePose(frame, state.Globals);
+            state.Anim.SkinMatrices(state.Globals, state.Skin);
+            state.Frame = frame;
+            state.HasPose = true;
+            if (state.Item != null)
             {
-                a.Item.Model.ApplySkin(a.Skin);
-                TransformBounds(a.Item.Model.Min, a.Item.Model.Max, a.Item.World, out a.Item.WorldMin, out a.Item.WorldMax);
+                state.Item.Model.ApplySkin(state.Skin);
+                TransformBounds(state.Item.Model.Min, state.Item.Model.Max, state.Item.World, out state.Item.WorldMin, out state.Item.WorldMax);
             }
-            _skeletonDirty = true;
+            skeletonDirty = true;
         }
 
         public void SetSelectedBone(int bone)
         {
             if (Anim == null) return;
             Anim.SelectedBone = bone;
-            _skeletonDirty = true;
+            skeletonDirty = true;
         }
 
         private static readonly Vector4 BoneColor = new Vector4(0.2f, 0.95f, 1f, 1f);
@@ -110,60 +110,60 @@ namespace Mk2.Viewer.Rendering
 
         private void BuildSkeletonLines()
         {
-            var d = new List<float>();
-            var a = Anim;
-            if (a != null && a.HasPose)
+            var lineData = new List<float>();
+            var state = Anim;
+            if (state != null && state.HasPose)
             {
-                var bones = a.Anim.Bones;
+                var bones = state.Anim.Bones;
                 // Joint marker size from the overall skeleton size.
                 var min = new Vector3(float.MaxValue);
                 var max = new Vector3(float.MinValue);
-                for (int i = 0; i < bones.Count; i++)
+                for (int bone = 0; bone < bones.Count; bone++)
                 {
-                    min = Vector3.Min(min, a.Globals[i].Translation);
-                    max = Vector3.Max(max, a.Globals[i].Translation);
+                    min = Vector3.Min(min, state.Globals[bone].Translation);
+                    max = Vector3.Max(max, state.Globals[bone].Translation);
                 }
                 float size = min.X <= max.X ? Math.Clamp((max - min).Length() * 0.012f, 0.5f, 40f) : 2f;
-                for (int i = 0; i < bones.Count; i++)
+                for (int index = 0; index < bones.Count; index++)
                 {
-                    var b = bones[i];
-                    var p = a.Globals[i].Translation;
-                    bool sel = i == a.SelectedBone;
-                    bool childOfSel = b.Parent >= 0 && b.Parent == a.SelectedBone;
-                    var col = sel ? SelectedBoneColor : b.IsAnimated ? BoneColor : StaticBoneColor;
-                    if (b.Parent >= 0)
+                    var bone = bones[index];
+                    var position = state.Globals[index].Translation;
+                    bool selected = index == state.SelectedBone;
+                    bool childOfSel = bone.Parent >= 0 && bone.Parent == state.SelectedBone;
+                    var color = selected ? SelectedBoneColor : bone.IsAnimated ? BoneColor : StaticBoneColor;
+                    if (bone.Parent >= 0)
                     {
-                        var q = a.Globals[b.Parent].Translation;
-                        if ((p - q).LengthSquared() > 1e-6f) Line(d, q, p, sel ? SelectedBoneColor : childOfSel ? ChildOfSelectedColor : col);
+                        var parentPosition = state.Globals[bone.Parent].Translation;
+                        if ((position - parentPosition).LengthSquared() > 1e-6f) Line(lineData, parentPosition, position, selected ? SelectedBoneColor : childOfSel ? ChildOfSelectedColor : color);
                     }
-                    Cross(d, p, sel ? size * 2.5f : size, col);
-                    if (sel)
+                    Cross(lineData, position, selected ? size * 2.5f : size, color);
+                    if (selected)
                     {
                         // Local axes of the selected bone: X red, Y green, Z blue.
-                        var m = a.Globals[i];
-                        float ax = size * 6f;
-                        Line(d, p, p + Vector3.Normalize(new Vector3(m.M11, m.M12, m.M13)) * ax, new Vector4(1, 0.2f, 0.2f, 1));
-                        Line(d, p, p + Vector3.Normalize(new Vector3(m.M21, m.M22, m.M23)) * ax, new Vector4(0.2f, 1, 0.2f, 1));
-                        Line(d, p, p + Vector3.Normalize(new Vector3(m.M31, m.M32, m.M33)) * ax, new Vector4(0.3f, 0.5f, 1, 1));
+                        var global = state.Globals[index];
+                        float axisLength = size * 6f;
+                        Line(lineData, position, position + Vector3.Normalize(new Vector3(global.M11, global.M12, global.M13)) * axisLength, new Vector4(1, 0.2f, 0.2f, 1));
+                        Line(lineData, position, position + Vector3.Normalize(new Vector3(global.M21, global.M22, global.M23)) * axisLength, new Vector4(0.2f, 1, 0.2f, 1));
+                        Line(lineData, position, position + Vector3.Normalize(new Vector3(global.M31, global.M32, global.M33)) * axisLength, new Vector4(0.3f, 0.5f, 1, 1));
                     }
                 }
             }
-            if (_skeletonLines == null) _skeletonLines = GpuLines.Create(d, dynamic: true);
-            else _skeletonLines.Update(d);
-            _skeletonDirty = false;
+            if (skeletonLines == null) skeletonLines = GpuLines.Create(lineData, dynamic: true);
+            else skeletonLines.Update(lineData);
+            skeletonDirty = false;
         }
 
-        private void DrawSkeleton(ViewSettings s)
+        private void DrawSkeleton(ViewSettings settings)
         {
-            if (Anim == null || !s.Skeleton) return;
-            if (_skeletonDirty || _skeletonLines == null) BuildSkeletonLines();
-            _lines.Use();
-            _lines.Set("uModel", Anim.Item?.World ?? Matrix4x4.Identity);
-            _lines.Set("uTint", Vector4.One);
+            if (Anim == null || !settings.Skeleton) return;
+            if (skeletonDirty || skeletonLines == null) BuildSkeletonLines();
+            lineShader.Use();
+            lineShader.Set("uModel", Anim.Item?.World ?? Matrix4x4.Identity);
+            lineShader.Set("uTint", Vector4.One);
             GL.Disable(EnableCap.DepthTest);
-            _skeletonLines.Draw();
+            skeletonLines.Draw();
             GL.Enable(EnableCap.DepthTest);
-            _lines.Set("uModel", Matrix4x4.Identity);
+            lineShader.Set("uModel", Matrix4x4.Identity);
         }
     }
 }
