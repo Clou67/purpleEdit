@@ -5,11 +5,7 @@ using Mk2.Viewer.Frames;
 
 namespace Mk2.Viewer.ImGuiUi
 {
-    /// <summary>
-    /// Base class for a top-level ImGui window ("frame"). Same shape as HexaSamples/Frame.cs:
-    /// each frame owns a stable ###id so retitling doesn't spawn a new window, and the host
-    /// just loops over open frames and calls RenderAsWindow on each.
-    /// </summary>
+    /// <summary>A top-level ImGui window with a stable ###id, so changing its title keeps the same window.</summary>
     public abstract class Frame
     {
         protected readonly MainFrame owner;
@@ -17,21 +13,21 @@ namespace Mk2.Viewer.ImGuiUi
         public string WindowTitle => frameName;
 
         public bool isOpen = true;
-        private readonly string _frameId;
+        private readonly string frameId;
         private static readonly HashSet<string> ClaimedIds = new HashSet<string>();
 
         protected Frame(MainFrame owner, string title)
         {
             this.owner = owner;
-            _frameId = ClaimId(GetType());
+            frameId = ClaimId(GetType());
             SetWindowTitle(title);
         }
 
         private static string ClaimId(Type type)
         {
-            for (uint i = 0; ; i++)
+            for (uint number = 0; ; number++)
             {
-                string candidate = type.Name + "#" + i;
+                string candidate = type.Name + "#" + number;
                 if (ClaimedIds.Add(candidate)) return candidate;
             }
         }
@@ -39,7 +35,7 @@ namespace Mk2.Viewer.ImGuiUi
         protected void SetWindowTitle(string title)
         {
             // "###id" pins the ImGui window ID so changing the title doesn't create a new window.
-            frameName = title + " ###" + _frameId;
+            frameName = title + " ###" + frameId;
         }
 
         public abstract void Render(float deltaTime);
@@ -55,7 +51,7 @@ namespace Mk2.Viewer.ImGuiUi
 
         public virtual void Dispose()
         {
-            ClaimedIds.Remove(_frameId);
+            ClaimedIds.Remove(frameId);
         }
     }
 }

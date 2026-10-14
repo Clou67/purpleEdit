@@ -1,115 +1,63 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Hexa.NET.ImGui;
-using Mk2.Game;
-using Mk2.Viewer.Rendering;
-using Mk2.Viewer.ImGuiUi.Frames;
 using Mk2.Viewer.ImGuiUi;
+using Mk2.Viewer.ImGuiUi.Frames;
+using Mk2.Viewer.Rendering;
 using Mk2.Viewer.Utils;
-using Mk2.Formats;
+using Vec2 = System.Numerics.Vector2;
 
 namespace Mk2.Viewer.Frames {
     public sealed class MainFrame : IDisposable {
-        private readonly Window _window;
-        private readonly ImGuiController _controller;
-        private readonly List<Frame> _openFrames = new List<Frame>();
+        public readonly Window Viewer;
+        private readonly ImGuiController controller;
+        private readonly List<Frame> frames = new List<Frame>();
 
-        public ViewSettings ViewSettings;
-        public Camera Camera;
-        public SceneRenderer Renderer;
-        public Action Redraw = () => { };
+        private readonly RenderModesFrame renderModes;
+        private readonly BrowserFrame browser;
+        private readonly PropertiesFrame properties;
+        private readonly LogFrame log;
+        private readonly MainViewFrame mainView;
+        private readonly ModelViewerFrame modelViewer;
 
-        public System.Numerics.Vector3 ClearColor;
-        public System.Numerics.Vector3 FogColor;
-        public System.Numerics.Vector2 FogRange;
+        private bool dockLayoutBuilt;
+        private string levelFilter = "";
+        private string packFilter = "";
 
-        public Func<IEnumerable<LevelDef>> GetLevels = () => Enumerable.Empty<LevelDef>();
-        public Func<IEnumerable<string>> GetPacks = () => Enumerable.Empty<string>();
-        public Func<IEnumerable<string>> GetModels = () => Enumerable.Empty<string>();
-        public Func<IEnumerable<string>> GetAnimations = () => Enumerable.Empty<string>();
-        public Func<IEnumerable<string>> GetSkeletons = () => Enumerable.Empty<string>();
-        public Action<LevelDef> OnLoadLevel = _ => { };
-        public Action<string> OnLoadPack = _ => { };
-        public Action<string> OnLoadModel = _ => { };
-        public Action<string> OnLoadAnimation = _ => { };
-        public Action<string> OnLoadSkeleton = _ => { };
-        public Action<string> OnOpenGameFolder = _ => { };
-        public Func<string> GetPropertiesText = () => "";
-        public Func<string> GetLogText = () => "";
-        public Func<string> GetStatusText = () => "";
+        public ViewSettings ViewSettings => Viewer.ViewSettings;
 
-        public Func<GameData> GetGameData = () => null;
-        public Func<string, Animation> GetAnimationForIndexing = _ => null;
+        public MainFrame(Window viewer) {
+            Viewer = viewer;
+            controller = new ImGuiController(viewer.ClientSize.X, viewer.ClientSize.Y);
 
-        public Func<LevelScene> GetScene = () => null;
-        public Action<LevelObject, DrawItem> OnSelect = (_, _) => { };
-        public Action OnFocusSelection = () => { };
-        public Action OnVisibilityChanged = () => { };
+            renderModes = new RenderModesFrame(this);
+            browser = new BrowserFrame(this);
+            properties = new PropertiesFrame(this);
+            log = new LogFrame(this) { isOpen = false };
+            modelViewer = new ModelViewerFrame(this);
+            mainView = new MainViewFrame(this);
+            frames.AddRange(new Frame[] { renderModes, browser, properties, log, modelViewer, mainView });
 
-
-        public Action<System.Numerics.Vector3, System.Numerics.Vector3> OnPickRay = (_, _) => { };
-
-        public Action<Action> RunOnMainThread = a => a();
-
-        private readonly RenderModesFrame _renderModes;
-        private readonly BrowserFrame _browser;
-        private readonly PropertiesFrame _properties;
-        private readonly LogFrame _log;
-        private readonly MainViewFrame _mainView;
-        private readonly ModelViewerFrame _modelViewer;
-
-        private uint _dockspaceId;
-        private bool _dockLayoutBuilt;
-
-        private string _levelFilter = "";
-
-        private static bool MatchesLevel(string name, string filter) =>
-            string.IsNullOrEmpty(filter) || name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
-
-        public MainFrame(Window window) {
-            _window = window;
-            _controller = new ImGuiController(window.ClientSize.X, window.ClientSize.Y);
-
-            _renderModes = new RenderModesFrame(this);
-            _browser = new BrowserFrame(this);
-            _properties = new PropertiesFrame(this);
-            _log = new LogFrame(this) { isOpen = false };
-            _modelViewer = new ModelViewerFrame(this);
-            _mainView = new MainViewFrame(this);
-
-
-            AddFrame(_renderModes);
-            AddFrame(_browser);
-            AddFrame(_properties);
-            AddFrame(_log);
-            AddFrame(_modelViewer);
-            AddFrame(_mainView);
-
-
-            window.Resize += e => _controller.WindowResized(window.ClientSize.X, window.ClientSize.Y);
-            window.MouseWheel += e => _controller.MouseScroll(new OpenTK.Mathematics.Vector2(e.OffsetX, e.OffsetY));
-            window.TextInput += e => _controller.PressChar((char)e.Unicode);
+            viewer.Resize += eventArgs => controller.WindowResized(viewer.ClientSize.X, viewer.ClientSize.Y);
+            viewer.MouseWheel += eventArgs => controller.MouseScroll(new OpenTK.Mathematics.Vector2(eventArgs.OffsetX, eventArgs.OffsetY));
+            viewer.TextInput += eventArgs => controller.PressChar((char)eventArgs.Unicode);
         }
-
-        public void AddFrame(Frame frame) => _openFrames.Add(frame);
 
         public void RenderUi() {
-            _controller.Update(_window, 1f / 60f);
-
+            controller.Update(Viewer, 1f / 60f);
             RenderMenuBar();
             RenderDockSpace();
-
-            foreach (var frame in _openFrames.Where(f => f.isOpen))
+            foreach (var frame in frames.Where(frame => frame.isOpen))
                 frame.RenderAsWindow(1f / 60f);
-
-            _controller.Render();
+            controller.Render();
         }
-        private unsafe void RenderDockSpace() {
-            ImGuiWindowFlags hostFlags = ImGuiWindowFlags.NoDocking | ImGuiWindowFlags.NoTitleBar |
-                ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove |
-                ImGuiWindowFlags.NoBringToFrontOnFocus | ImGuiWindowFlags.NoNavFocus |
-                ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.MenuBar;
+
+        private void RenderDockSpace() {
+            var hostFlags = ImGuiWindowFlags.NoDocking | ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse |
+                            ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoBringToFrontOnFocus |
+                            ImGuiWindowFlags.NoNavFocus | ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.MenuBar;
 
             var viewport = ImGui.GetMainViewport();
             ImGui.SetNextWindowPos(viewport.WorkPos);
@@ -117,93 +65,142 @@ namespace Mk2.Viewer.Frames {
             ImGui.SetNextWindowViewport(viewport.ID);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new System.Numerics.Vector2(0, 0));
-
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vec2.Zero);
             ImGui.Begin("##DockSpaceHost", hostFlags);
             ImGui.PopStyleVar(3);
 
-            _dockspaceId = ImGui.GetID("MainDockSpace");
-            ImGui.DockSpace(_dockspaceId, System.Numerics.Vector2.Zero, ImGuiDockNodeFlags.None, null);
-
-            if (!_dockLayoutBuilt) {
-                BuildDefaultLayout(_dockspaceId);
-                _dockLayoutBuilt = true;
+            uint dockspaceId = ImGui.GetID("MainDockSpace");
+            ImGui.DockSpace(dockspaceId, Vec2.Zero, ImGuiDockNodeFlags.None, null);
+            if (!dockLayoutBuilt) {
+                BuildDefaultLayout(dockspaceId);
+                dockLayoutBuilt = true;
             }
-
             ImGui.End();
         }
 
         private unsafe void BuildDefaultLayout(uint dockspaceId) {
             ImGuiP.DockBuilderSetNodeSize(dockspaceId, ImGui.GetMainViewport().WorkSize);
-
             uint center = dockspaceId;
             uint left, right, bottom, rightBottom;
-
             ImGuiP.DockBuilderSplitNode(center, ImGuiDir.Left, 0.22f, &left, &center);
             ImGuiP.DockBuilderSplitNode(center, ImGuiDir.Right, 0.25f, &right, &center);
             ImGuiP.DockBuilderSplitNode(center, ImGuiDir.Down, 0.22f, &bottom, &center);
-            ImGuiP.DockBuilderSplitNode(right, ImGuiDir.Down, 0.5f, &rightBottom, &right);
-
-            ImGuiP.DockBuilderDockWindow(_modelViewer.WindowTitle, center);
-            ImGuiP.DockBuilderDockWindow(_mainView.WindowTitle, center);
-            ImGuiP.DockBuilderDockWindow(_browser.WindowTitle, left);
-            ImGuiP.DockBuilderDockWindow(_renderModes.WindowTitle, right);
-            ImGuiP.DockBuilderDockWindow(_properties.WindowTitle, rightBottom);
-            ImGuiP.DockBuilderDockWindow(_log.WindowTitle, bottom);
-
+            ImGuiP.DockBuilderSplitNode(right, ImGuiDir.Down, 0.6f, &rightBottom, &right);
+            ImGuiP.DockBuilderDockWindow(modelViewer.WindowTitle, center);
+            ImGuiP.DockBuilderDockWindow(mainView.WindowTitle, center);
+            ImGuiP.DockBuilderDockWindow(browser.WindowTitle, left);
+            ImGuiP.DockBuilderDockWindow(renderModes.WindowTitle, right);
+            ImGuiP.DockBuilderDockWindow(properties.WindowTitle, rightBottom);
+            ImGuiP.DockBuilderDockWindow(log.WindowTitle, bottom);
             ImGuiP.DockBuilderFinish(dockspaceId);
         }
 
         private void RenderMenuBar() {
-            if (ImGui.BeginMainMenuBar()) {
-                if (ImGui.BeginMenu("File")) {
-                    if (ImGui.MenuItem("Open game folder…")) {
-                        string picked = CrossFileDialog.OpenFolder("Choose a game folder");
-                        if (picked.Length > 0) OnOpenGameFolder(picked);
-                    }
-                    ImGui.EndMenu();
-                }
+            if (!ImGui.BeginMainMenuBar()) return;
+            RenderFileMenu();
+            RenderListMenu("Levels", ref levelFilter, Viewer.Levels.Select(level => level.Name), name => {
+                var level = Viewer.Levels.FirstOrDefault(candidate => candidate.Name == name);
+                if (level != null) _ = Viewer.LoadLevel(level);
+            });
+            RenderListMenu("Packs", ref packFilter,
+                Viewer.Game?.ChunkPackNames.OrderBy(name => name, StringComparer.OrdinalIgnoreCase) ?? Enumerable.Empty<string>(),
+                name => _ = Viewer.LoadPack(name));
 
-                if (ImGui.BeginMenu("Levels")) {
-                    ImGui.SetNextItemWidth(220);
-                    ImGui.InputTextWithHint("##levelFilter", "Filter levels…", ref _levelFilter, 128);
-                    ImGui.Separator();
-                    if (ImGui.BeginChild("##levelMenuList", new System.Numerics.Vector2(260, 360))) {
-                        foreach (var lv in GetLevels().Where(l => MatchesLevel(l.Name, _levelFilter))) {
-                            if (ImGui.MenuItem(lv.Name)) OnLoadLevel(lv);
-                        }
-                    }
-                    ImGui.EndChild();
-                    ImGui.EndMenu();
-                }
-
-                if (ImGui.BeginMenu("Windows")) {
-                    MenuToggle("Main View", _mainView);
-                    MenuToggle("Render modes", _renderModes);
-                    MenuToggle("Browser (Scene)", _browser);
-                    MenuToggle("Model Viewer", _modelViewer);
-                    MenuToggle("Properties", _properties);
-                    MenuToggle("Log", _log);
-                    if (ImGui.MenuItem("Reset layout")) _dockLayoutBuilt = false;
-                    ImGui.EndMenu();
-                }
-
-                ImGui.SameLine(ImGui.GetWindowWidth() - 420);
-                ImGui.TextDisabled(GetStatusText());
-
-                ImGui.EndMainMenuBar();
+            if (ImGui.BeginMenu("View")) {
+                if (ImGui.MenuItem("Frame scene")) Viewer.FrameScene();
+                if (ImGui.MenuItem("Focus selection", "F")) Viewer.FocusSelection();
+                ImGui.EndMenu();
             }
+
+            if (ImGui.BeginMenu("Windows")) {
+                MenuToggle("Main View", mainView);
+                MenuToggle("Render", renderModes);
+                MenuToggle("Browser", browser);
+                MenuToggle("Model Viewer", modelViewer);
+                MenuToggle("Properties", properties);
+                MenuToggle("Log", log);
+                if (ImGui.MenuItem("Reset layout")) dockLayoutBuilt = false;
+                ImGui.EndMenu();
+            }
+
+            ImGui.SameLine(ImGui.GetWindowWidth() - 420);
+            ImGui.TextDisabled(Viewer.Status);
+            ImGui.EndMainMenuBar();
         }
 
-        private void MenuToggle(string label, Frame frame) {
+        private void RenderFileMenu() {
+            if (!ImGui.BeginMenu("File")) return;
+            if (ImGui.MenuItem("Open game folder…")) {
+                string folder = CrossFileDialog.OpenFolder("Game folder");
+                if (folder.Length > 0) _ = Viewer.OpenGameSource(folder);
+            }
+            if (ImGui.MenuItem("Open RKV…")) {
+                string archive = CrossFileDialog.OpenFile("RKV archive", "*.rkv *.bpk");
+                if (archive.Length > 0) _ = Viewer.OpenGameSource(archive);
+            }
+            if (ImGui.MenuItem("Extract RKV…", "", false, !Viewer.Busy)) {
+                string archive = CrossFileDialog.OpenFile("RKV archive", "*.rkv *.bpk");
+                string folder = archive.Length > 0 ? CrossFileDialog.OpenFolder("Extract to") : "";
+                if (folder.Length > 0) _ = Viewer.ExtractArchive(archive, folder);
+            }
+
+            ImGui.Separator();
+            bool hasScene = Viewer.Scene != null;
+            if (ImGui.MenuItem("Export scene to .glb…", "", false, hasScene)) {
+                string path = SavePath("Export scene", ".glb");
+                if (path != null) Viewer.ExportScene(path);
+            }
+            if (ImGui.MenuItem("Export selected model to .glb…", "", false, Viewer.Renderer.SelectedItem != null)) {
+                string path = SavePath("Export model", ".glb");
+                if (path != null) Viewer.ExportSelectedModel(path);
+            }
+            if (ImGui.MenuItem("Export scene textures to PNG…", "", false, hasScene)) {
+                string folder = CrossFileDialog.OpenFolder("Texture folder");
+                if (folder.Length > 0) Viewer.ExportTextures(folder);
+            }
+            if (ImGui.MenuItem("Export layouts as text…", "", false, hasScene)) {
+                string folder = CrossFileDialog.OpenFolder("Layout folder");
+                if (folder.Length > 0) Viewer.ExportLayouts(folder);
+            }
+            if (ImGui.MenuItem("Save screenshot…")) {
+                string path = SavePath("Screenshot", ".png");
+                if (path != null) Viewer.RequestScreenshot(path);
+            }
+
+            ImGui.Separator();
+            if (ImGui.MenuItem("Exit")) Viewer.Close();
+            ImGui.EndMenu();
+        }
+
+        private static string SavePath(string title, string extension) {
+            string path = CrossFileDialog.SaveFile(title, "*" + extension);
+            if (path.Length == 0) return null;
+            return string.Equals(Path.GetExtension(path), extension, StringComparison.OrdinalIgnoreCase) ? path : path + extension;
+        }
+
+        private static void RenderListMenu(string title, ref string filter, IEnumerable<string> names, Action<string> onPick) {
+            if (!ImGui.BeginMenu(title)) return;
+            ImGui.SetNextItemWidth(240);
+            ImGui.InputTextWithHint("##filter", "Filter", ref filter, 128);
+            ImGui.Separator();
+            string activeFilter = filter;
+            if (ImGui.BeginChild("##list", new Vec2(260, 360))) {
+                foreach (var name in names.Where(name => activeFilter.Length == 0 || name.Contains(activeFilter, StringComparison.OrdinalIgnoreCase)))
+                    if (ImGui.MenuItem(name)) onPick(name);
+            }
+            ImGui.EndChild();
+            ImGui.EndMenu();
+        }
+
+        private static void MenuToggle(string label, Frame frame) {
             bool open = frame.isOpen;
             if (ImGui.MenuItem(label, "", open)) frame.isOpen = !open;
         }
 
         public void Dispose() {
-            foreach (var frame in _openFrames) frame.Dispose();
-            _openFrames.Clear();
-            _controller.Dispose();
+            foreach (var frame in frames) frame.Dispose();
+            frames.Clear();
+            controller.Dispose();
         }
     }
 }

@@ -3,7 +3,7 @@ using Mk2.Formats;
 namespace Mk2.Game
 {
     /// <summary>
-    /// Indexes every asset reachable from a root folder: loose extracted files (any layout),
+    /// Indexes every asset reachable from a root folder (or a single archive file): loose extracted files (any layout),
     /// chunk packs (.BPK) and full archives (.RKV). Lookups are by file name, case-insensitive.
     /// </summary>
     public sealed class GameData
@@ -31,7 +31,8 @@ namespace Mk2.Game
         {
             Root = root;
             var files = new List<string>();
-            Collect(root, files, 0);
+            if (File.Exists(root)) files.Add(root);
+            else Collect(root, files, 0);
             files.Sort(StringComparer.OrdinalIgnoreCase);
 
             // Pass 1: loose chunk packs (.BPK). Pass 2: full archives (.RKV). Pass 3: loose files.

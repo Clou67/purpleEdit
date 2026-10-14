@@ -11,8 +11,8 @@ namespace Mk2.Viewer.ImGuiUi.Frames
 
         public override void Render(float deltaTime)
         {
-            string text = owner.GetLogText() ?? "";
-            ImGui.InputTextMultiline("##log", ref text, 65536, new System.Numerics.Vector2(-1, -1),
+            string text = owner.Viewer.LogText;
+            ImGui.InputTextMultiline("##log", ref text, (nuint)(text.Length + 1), new System.Numerics.Vector2(-1, -1),
                 ImGuiInputTextFlags.ReadOnly);
         }
     }

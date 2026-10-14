@@ -11,123 +11,97 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
     public sealed class MainViewFrame : Frame {
         protected override string frameName { get; set; }
 
-        private readonly RenderTarget _rt = new RenderTarget();
-        private bool _glInit;
-        private bool _rmb, _mmb, _lmb;
-        private Vec2 _lastMouse, _downMouse;
-        private readonly Stopwatch _clock = Stopwatch.StartNew();
-        private double _lastTick;
+        private readonly RenderTarget renderTarget = new RenderTarget();
+        private readonly Stopwatch clock = Stopwatch.StartNew();
+        private bool rightDragging, middleDragging, leftPressed;
+        private Vec2 lastMouse, pressedMouse;
+        private double lastTick;
 
         public MainViewFrame(MainFrame owner) : base(owner, "Main View") { }
 
         public override void Render(float deltaTime) {
-            var avail = ImGui.GetContentRegionAvail();
-            int w = Math.Max(1, (int)avail.X);
-            int h = Math.Max(1, (int)avail.Y);
-            if (w <= 1 || h <= 1) return;
+            var available = ImGui.GetContentRegionAvail();
+            int width = (int)available.X;
+            int height = (int)available.Y;
+            if (width <= 1 || height <= 1) return;
 
-            RenderSceneOffscreen(w, h);
+            RenderSceneOffscreen(width, height);
 
-            var cursor = ImGui.GetCursorScreenPos();
+            var origin = ImGui.GetCursorScreenPos();
             unsafe {
-                ImGui.Image(new ImTextureRef(default, (ulong)(uint)_rt.ColorTexture), new Vec2(w, h), new Vec2(0, 1), new Vec2(1, 0));
+                ImGui.Image(new ImTextureRef(default, (ulong)(uint)renderTarget.ColorTexture), new Vec2(width, height), new Vec2(0, 1), new Vec2(1, 0));
             }
-            bool hovered = ImGui.IsItemHovered();
-            HandleViewportInput(hovered, cursor, w, h);
+            HandleInput(ImGui.IsItemHovered(), origin, width, height);
         }
 
-        private void RenderSceneOffscreen(int w, int h) {
-            var renderer = owner.Renderer;
-            var cam = owner.Camera;
-            var vs = owner.ViewSettings;
-            if (renderer == null || cam == null || vs == null) return;
-
-            if (!_glInit) { renderer.InitGl(); _glInit = true; }
-
-            int[] prevViewport = new int[4];
-            GL.GetInteger(GetPName.Viewport, prevViewport);
-
-            _rt.RenderToTexture(w, h, () => {
-                renderer.Render(cam, w, h, vs, owner.ClearColor, owner.FogColor, owner.FogRange);
+        private void RenderSceneOffscreen(int width, int height) {
+            var viewer = owner.Viewer;
+            int[] previousViewport = new int[4];
+            GL.GetInteger(GetPName.Viewport, previousViewport);
+            renderTarget.RenderToTexture(width, height, () => {
+                viewer.Renderer.Render(viewer.Camera, width, height, viewer.ViewSettings, viewer.ClearColor, viewer.FogColor, viewer.FogRange);
+                viewer.SavePendingScreenshot(width, height);
             });
-
-            GL.Viewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+            GL.Viewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
         }
 
-        private void HandleViewportInput(bool hovered, Vec2 origin, int w, int h) {
-            var cam = owner.Camera;
-            if (cam == null) return;
-
-            double now = _clock.Elapsed.TotalSeconds;
-            float dt = (float)Math.Min(0.05, now - _lastTick);
-            _lastTick = now;
+        private void HandleInput(bool hovered, Vec2 origin, int width, int height) {
+            var viewer = owner.Viewer;
+            var camera = viewer.Camera;
+            double now = clock.Elapsed.TotalSeconds;
+            float elapsed = (float)Math.Min(0.05, now - lastTick);
+            lastTick = now;
 
             var io = ImGui.GetIO();
             var mouse = io.MousePos;
 
-            if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Right)) _rmb = true;
-            if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Middle)) _mmb = true;
-            if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left)) { _lmb = true; _downMouse = mouse; }
-            if (ImGui.IsMouseReleased(ImGuiMouseButton.Right)) _rmb = false;
-            if (ImGui.IsMouseReleased(ImGuiMouseButton.Middle)) _mmb = false;
+            if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Right)) rightDragging = true;
+            if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Middle)) middleDragging = true;
+            if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left)) { leftPressed = true; pressedMouse = mouse; }
+            if (ImGui.IsMouseReleased(ImGuiMouseButton.Right)) rightDragging = false;
+            if (ImGui.IsMouseReleased(ImGuiMouseButton.Middle)) middleDragging = false;
             if (ImGui.IsMouseReleased(ImGuiMouseButton.Left)) {
-                bool wasLmb = _lmb;
-                _lmb = false;
-                if (wasLmb && hovered) {
-                    float dist = Math.Abs(mouse.X - _downMouse.X) + Math.Abs(mouse.Y - _downMouse.Y);
-                    if (dist < 4) PickAt(mouse, origin, w, h);
+                bool wasPressed = leftPressed;
+                leftPressed = false;
+                float travel = Math.Abs(mouse.X - pressedMouse.X) + Math.Abs(mouse.Y - pressedMouse.Y);
+                if (wasPressed && hovered && travel < 4) {
+                    camera.Ray(mouse.X - origin.X, mouse.Y - origin.Y, width, height, out var rayOrigin, out var rayDirection);
+                    viewer.PickRay(rayOrigin, rayDirection);
                 }
             }
 
-            if (hovered || _rmb || _mmb) {
-                float dx = mouse.X - _lastMouse.X, dy = mouse.Y - _lastMouse.Y;
-                if (_rmb) cam.Rotate(dx * 0.005f, -dy * 0.005f);
-                else if (_mmb) {
-                    float k = cam.Speed * 0.002f;
-                    cam.Position += (-cam.Right * dx + cam.Up * dy) * k;
-                }
-            }
-            _lastMouse = mouse;
+            float deltaX = mouse.X - lastMouse.X, deltaY = mouse.Y - lastMouse.Y;
+            if (rightDragging) camera.Rotate(deltaX * 0.005f, -deltaY * 0.005f);
+            else if (middleDragging) camera.Position += (-camera.Right * deltaX + camera.Up * deltaY) * (camera.Speed * 0.002f);
+            lastMouse = mouse;
 
-            if (hovered) {
-                float wheel = io.MouseWheel;
-                if (wheel != 0) cam.Speed = Math.Clamp(cam.Speed * (wheel > 0 ? 1.25f : 0.8f), 50f, 200000f);
-            }
+            if (hovered && io.MouseWheel != 0)
+                camera.Speed = Math.Clamp(camera.Speed * (io.MouseWheel > 0 ? 1.25f : 0.8f), 50f, 200000f);
 
-            if (hovered || _rmb || _mmb) UpdateFlyMovement(cam, dt);
-            if (hovered && ImGui.IsKeyPressed(ImGuiKey.F)) owner.OnFocusSelection();
-            if (hovered && ImGui.IsKeyPressed(ImGuiKey.Escape)) owner.OnSelect(null, null);
+            if (hovered || rightDragging || middleDragging) Fly(camera, elapsed);
+            if (hovered && ImGui.IsKeyPressed(ImGuiKey.F)) viewer.FocusSelection();
+            if (hovered && ImGui.IsKeyPressed(ImGuiKey.Escape)) viewer.Select(null, null);
         }
 
-        private static void UpdateFlyMovement(Rendering.Camera cam, float dt) {
+        public static void Fly(Camera camera, float elapsed) {
             var io = ImGui.GetIO();
             var move = Vec3.Zero;
-            if (ImGui.IsKeyDown(ImGuiKey.W)) move += cam.Forward;
-            if (ImGui.IsKeyDown(ImGuiKey.S)) move -= cam.Forward;
-            if (ImGui.IsKeyDown(ImGuiKey.D)) move += cam.Right;
-            if (ImGui.IsKeyDown(ImGuiKey.A)) move -= cam.Right;
-            if (ImGui.IsKeyDown(ImGuiKey.E) || ImGui.IsKeyDown(ImGuiKey.Space)) move += Vec3.UnitY;
+            if (ImGui.IsKeyDown(ImGuiKey.W)) move += camera.Forward;
+            if (ImGui.IsKeyDown(ImGuiKey.S)) move -= camera.Forward;
+            if (ImGui.IsKeyDown(ImGuiKey.D)) move += camera.Right;
+            if (ImGui.IsKeyDown(ImGuiKey.A)) move -= camera.Right;
+            if (ImGui.IsKeyDown(ImGuiKey.E)) move += Vec3.UnitY;
             if (ImGui.IsKeyDown(ImGuiKey.Q)) move -= Vec3.UnitY;
             if (move == Vec3.Zero) return;
-
-            float speed = cam.Speed;
+            float speed = camera.Speed;
             if (io.KeyShift) speed *= 4;
             if (io.KeyCtrl) speed *= 0.25f;
-            cam.Position += Vec3.Normalize(move) * speed * dt;
-        }
-
-        private void PickAt(Vec2 mouse, Vec2 origin, int w, int h) {
-            var cam = owner.Camera;
-            if (cam == null) return;
-
-            float localX = mouse.X - origin.X, localY = mouse.Y - origin.Y;
-            cam.Ray(localX, localY, w, h, out var o, out var d);
-            owner.OnPickRay(o, d);
+            camera.Position += Vec3.Normalize(move) * speed * elapsed;
         }
 
         public override void Dispose() {
             base.Dispose();
-            _rt.Dispose();
+            renderTarget.Dispose();
         }
     }
 }

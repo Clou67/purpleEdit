@@ -1,9 +1,9 @@
+using System.Collections.Generic;
 using Hexa.NET.ImGui;
 using Mk2.Viewer.Frames;
 
 namespace Mk2.Viewer.ImGuiUi.Frames
 {
-    /// <summary>Properties of the current selection — its own frame, same as the old right-panel "Properties" tab.</summary>
     public sealed class PropertiesFrame : Frame
     {
         protected override string frameName { get; set; }
@@ -12,18 +12,51 @@ namespace Mk2.Viewer.ImGuiUi.Frames
 
         public override void Render(float deltaTime)
         {
-            string text = owner.GetPropertiesText() ?? "";
-            if (text.Length == 0)
+            var view = owner.Viewer.Properties;
+            if (view.Title.Length == 0 && view.Sections.Count == 0) return;
+
+            if (view.Title.Length > 0) ImGui.SeparatorText(view.Title);
+
+            foreach (var section in view.Sections)
             {
-                ImGui.TextDisabled("Nothing selected.");
-                return;
+                if (!ImGui.CollapsingHeader(section.Heading, ImGuiTreeNodeFlags.DefaultOpen)) continue;
+                ImGui.PushID(section.Heading);
+                ImGui.TextUnformatted(section.Body);
+                if (ImGui.BeginPopupContextItem("##copy"))
+                {
+                    if (ImGui.MenuItem("Copy")) ImGui.SetClipboardText(section.Body);
+                    ImGui.EndPopup();
+                }
+                ImGui.PopID();
             }
 
-            ImGui.InputTextMultiline("##properties", ref text, 65536, new System.Numerics.Vector2(-1, -1),
-                ImGuiInputTextFlags.ReadOnly);
+            if (view.Scripts.Count > 0 && ImGui.CollapsingHeader($"Scripts ({view.Scripts.Count})", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                foreach (var script in view.Scripts) ImGui.TextWrapped(script);
+            }
 
-            // TODO: the WinForms version also has a clickable "Links" list under Properties for
-            // jumping between referenced objects — not ported yet, keeping this basic for now.
+            if (view.ShowsLinks)
+            {
+                RenderLinks($"References ({view.References.Count})", "references", view.References);
+                RenderLinks($"Referenced by ({view.ReferencedBy.Count})", "referencedBy", view.ReferencedBy);
+            }
+        }
+
+        private void RenderLinks(string heading, string id, List<PropertyLink> links)
+        {
+            ImGui.PushID(id);
+            if (ImGui.CollapsingHeader(heading, ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                for (int index = 0; index < links.Count; index++)
+                {
+                    var link = links[index];
+                    ImGui.PushID(index);
+                    if (ImGui.Selectable(link.Label)) owner.Viewer.FollowLink(link.Target);
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip(link.Via);
+                    ImGui.PopID();
+                }
+            }
+            ImGui.PopID();
         }
     }
 }

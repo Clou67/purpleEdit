@@ -34,8 +34,7 @@ namespace Mk2.Viewer.Rendering
         public void SetAnimation(DrawItem item, Animation anim)
         {
             ClearAnimation();
-            if (anim == null) return;
-            if (item != null)
+            if (item != null && (anim != null || item.Model.Animatable))
             {
                 var loadedModel = item.Model.Source;
                 var previous = item.Model;
@@ -44,7 +43,9 @@ namespace Mk2.Viewer.Rendering
                 _models[loadedModel] = rebuilt;
                 _pickTris.Remove(previous);
                 previous.Dispose();
+                TransformBounds(rebuilt.Min, rebuilt.Max, item.World, out item.WorldMin, out item.WorldMax);
             }
+            if (anim == null) return;
             Anim = new AnimationState
             {
                 Item = item,

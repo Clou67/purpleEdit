@@ -1,157 +1,150 @@
+using System;
 using System.Linq;
 using Hexa.NET.ImGui;
 using Mk2.Game;
 using Mk2.Viewer.Frames;
 using Mk2.Viewer.Rendering;
-using Mk2.Viewer.Utils;
 
 namespace Mk2.Viewer.ImGuiUi.Frames {
     public sealed class BrowserFrame : Frame {
         protected override string frameName { get; set; }
 
+        private string filter = "";
+
         public BrowserFrame(MainFrame owner) : base(owner, "Browser") { }
 
         public override void Render(float deltaTime) {
-            RenderSceneTree();
-        }
+            var viewer = owner.Viewer;
+            var scene = viewer.Scene;
+            if (scene == null) return;
 
-        private string _sceneFilter = "";
-
-        private void RenderSceneTree() {
-            var scene = owner.GetScene();
-            if (scene == null) {
-                ImGui.TextDisabled("No scene loaded.");
-                return;
-            }
-            ImGui.TextDisabled("Tick/untick to show or hide. Click to select, double-click to fly to it.");
-            ImGui.InputTextWithHint("##sceneFilter", "Filter objects (class, ID name, ID number)…", ref _sceneFilter, 128);
+            ImGui.SetNextItemWidth(-1);
+            ImGui.InputTextWithHint("##sceneFilter", "Filter", ref filter, 128);
             ImGui.Separator();
 
-            var vs = owner.ViewSettings;
-            string filter = _sceneFilter.Trim();
+            var settings = viewer.ViewSettings;
+            string activeFilter = filter.Trim();
 
-            if (!ImGui.BeginChild("SceneTree")) { ImGui.EndChild(); return; }
-            foreach (var ch in scene.Chunks) {
-                string cname = ch.Def.Name;
-                ImGui.PushID(cname);
-
-                bool chunkVisible = !vs.HiddenChunks.Contains(cname);
-                if (ImGui.Checkbox("##chunkVisible", ref chunkVisible)) {
-                    if (chunkVisible) vs.HiddenChunks.Remove(cname); else vs.HiddenChunks.Add(cname);
-                    owner.OnVisibilityChanged();
-                }
-                ImGui.SameLine();
-                bool chunkOpen = ImGui.TreeNodeEx(cname + (ch.Def.IsEnvironment ? "  [env]" : ""), ImGuiTreeNodeFlags.SpanAvailWidth);
-
-                if (chunkOpen) {
-                    if (filter.Length == 0) {
-                        if (ch.Overlays.Count > 0) RenderGroup(vs, cname, "overlays", $"Overlays ({ch.Overlays.Count})", () => {
-                            foreach (var (ov, m) in ch.Overlays) {
-                                string label = m == null ? ov.Name + " (missing)" : $"{ov}  — {m.Model.TriangleCount:N0} tris";
-                                RenderItemCheckbox(vs, cname, ov.Name, label, () => {
-                                    var it = owner.Renderer.Items.FirstOrDefault(i => i.Kind == ItemKind.Overlay && i.Name == ov.Name && i.Chunk.Def.Name == cname);
-                                    SelectAndMaybeFocus(null, it);
-                                });
-                            }
-                        });
-
-                        if (ch.Grounds.Count > 0) RenderGroup(vs, cname, "grounds", $"Ground collision ({ch.Grounds.Count})", () => {
-                            foreach (var (n, c) in ch.Grounds) {
-                                string label = $"{n}  — {c.Triangles.Count} tris [{string.Join(", ", c.Materials)}]";
-                                RenderItemCheckbox(vs, cname, n, label, () => { /* ground collision has no DrawItem to select/focus on */ });
-                            }
-                        });
-
-                        if (ch.EnvDome != null) {
-                            bool domeVisible = !vs.HiddenGroups.Contains((cname, "dome"));
-                            if (ImGui.Checkbox("##dome", ref domeVisible)) { ToggleGroup(vs, cname, "dome", domeVisible); owner.OnVisibilityChanged(); }
-                            ImGui.SameLine();
-                            ImGui.TextUnformatted("Sky dome: " + ch.EnvDome.Name);
-                        }
-                    }
-
-                    var objs = ch.Objects.Where(o => Matches(o, filter)).ToList();
-                    if (objs.Count > 0) {
-                        RenderGroup(vs, cname, "objects", $"Objects ({objs.Count})", () => {
-                            foreach (var grp in objs.GroupBy(o => o.Category).OrderBy(g => g.Key)) {
-                                var cat = grp.Key;
-                                ImGui.PushID(cat.ToString());
-                                bool catVisible = !vs.HiddenChunkCategories.Contains((cname, cat));
-                                if (ImGui.Checkbox("##catVisible", ref catVisible)) {
-                                    if (catVisible) vs.HiddenChunkCategories.Remove((cname, cat)); else vs.HiddenChunkCategories.Add((cname, cat));
-                                    owner.OnVisibilityChanged();
-                                }
-                                ImGui.SameLine();
-                                bool catOpen = ImGui.TreeNodeEx($"{cat} ({grp.Count()})", filter.Length > 0 ? ImGuiTreeNodeFlags.SpanAvailWidth | ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.SpanAvailWidth);
-                                if (catOpen) {
-                                    foreach (var o in grp) {
-                                        string model = ch.ObjectModels.TryGetValue(o, out var lm) ? "  → " + lm.Name : "";
-                                        bool objVisible = !vs.HiddenObjects.Contains(o);
-                                        ImGui.PushID(o.GetHashCode());
-                                        if (ImGui.Checkbox("##objVisible", ref objVisible)) {
-                                            if (objVisible) vs.HiddenObjects.Remove(o); else vs.HiddenObjects.Add(o);
-                                            owner.OnVisibilityChanged();
-                                        }
-                                        ImGui.SameLine();
-                                        if (ImGui.Selectable($"{o.DisplayName}{model}", false, ImGuiSelectableFlags.AllowDoubleClick))
-                                            SelectAndMaybeFocus(o, null, ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left));
-                                        ImGui.PopID();
-                                    }
-                                    ImGui.TreePop();
-                                }
-                                ImGui.PopID();
-                            }
-                        });
-                    }
-
-                    ImGui.TreePop();
-                }
-                ImGui.PopID();
+            if (ImGui.BeginChild("SceneTree")) {
+                foreach (var chunk in scene.Chunks) RenderChunk(chunk, settings, activeFilter);
             }
             ImGui.EndChild();
         }
 
-        /// <summary>Checkbox + collapsible header for one of a chunk's groups (overlays/grounds/objects), same shape repeated three times.</summary>
-        private static void RenderGroup(ViewSettings vs, string chunk, string key, string label, System.Action renderChildren) {
-            ImGui.PushID(key);
-            bool visible = !vs.GroupHidden(chunk, key);
-            if (ImGui.Checkbox("##groupVisible", ref visible)) ToggleGroup(vs, chunk, key, visible);
+        private void RenderChunk(SceneChunk chunk, ViewSettings settings, string activeFilter) {
+            var viewer = owner.Viewer;
+            string chunkName = chunk.Def.Name;
+            ImGui.PushID(chunkName);
+
+            bool chunkVisible = !settings.HiddenChunks.Contains(chunkName);
+            if (ImGui.Checkbox("##chunkVisible", ref chunkVisible)) {
+                if (chunkVisible) settings.HiddenChunks.Remove(chunkName); else settings.HiddenChunks.Add(chunkName);
+            }
             ImGui.SameLine();
-            bool open = ImGui.TreeNodeEx(label, ImGuiTreeNodeFlags.SpanAvailWidth);
-            if (open) {
+            if (ImGui.TreeNodeEx(chunkName + (chunk.Def.IsEnvironment ? "  [env]" : ""), ImGuiTreeNodeFlags.SpanAvailWidth)) {
+                if (activeFilter.Length == 0) {
+                    if (chunk.Overlays.Count > 0) RenderGroup(settings, chunkName, "overlays", $"Overlays ({chunk.Overlays.Count})", () => {
+                        foreach (var (overlay, model) in chunk.Overlays) {
+                            string label = model == null ? overlay.Name + " (missing)" : $"{overlay}  — {model.Model.TriangleCount:N0} tris";
+                            if (ItemRow(settings, chunkName, overlay.Name, label)) {
+                                var item = viewer.Renderer.Items.FirstOrDefault(candidate =>
+                                    candidate.Kind == ItemKind.Overlay && candidate.Name == overlay.Name && candidate.Chunk == chunk);
+                                if (item != null) viewer.SelectAndFocus(null, item);
+                            }
+                        }
+                    });
+
+                    if (chunk.Grounds.Count > 0) RenderGroup(settings, chunkName, "grounds", $"Ground collision ({chunk.Grounds.Count})", () => {
+                        foreach (var (name, collision) in chunk.Grounds) {
+                            if (ItemRow(settings, chunkName, name, $"{name}  — {collision.Triangles.Count} tris"))
+                                viewer.ShowCollision(collision);
+                        }
+                    });
+
+                    if (chunk.EnvDome != null) {
+                        bool domeVisible = !settings.GroupHidden(chunkName, "dome");
+                        if (ImGui.Checkbox("##dome", ref domeVisible)) SetGroupVisible(settings, chunkName, "dome", domeVisible);
+                        ImGui.SameLine();
+                        ImGui.TextUnformatted("Sky dome: " + chunk.EnvDome.Name);
+                    }
+                }
+
+                var objects = chunk.Objects.Where(levelObject => Matches(levelObject, activeFilter)).ToList();
+                if (objects.Count > 0) RenderGroup(settings, chunkName, "objects", $"Objects ({objects.Count})", () => {
+                    foreach (var categoryGroup in objects.GroupBy(levelObject => levelObject.Category).OrderBy(group => group.Key))
+                        RenderCategory(chunk, categoryGroup.Key, categoryGroup.ToList(), settings, activeFilter.Length > 0);
+                });
+
+                ImGui.TreePop();
+            }
+            ImGui.PopID();
+        }
+
+        private void RenderCategory(SceneChunk chunk, ObjectCategory category, System.Collections.Generic.List<LevelObject> objects, ViewSettings settings, bool expand) {
+            var viewer = owner.Viewer;
+            string chunkName = chunk.Def.Name;
+            ImGui.PushID(category.ToString());
+            bool categoryVisible = !settings.HiddenChunkCategories.Contains((chunkName, category));
+            if (ImGui.Checkbox("##categoryVisible", ref categoryVisible)) {
+                if (categoryVisible) settings.HiddenChunkCategories.Remove((chunkName, category));
+                else settings.HiddenChunkCategories.Add((chunkName, category));
+            }
+            ImGui.SameLine();
+            var flags = ImGuiTreeNodeFlags.SpanAvailWidth | (expand ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None);
+            if (ImGui.TreeNodeEx($"{category} ({objects.Count})", flags)) {
+                foreach (var levelObject in objects) {
+                    string model = chunk.ObjectModels.TryGetValue(levelObject, out var loadedModel) ? "  → " + loadedModel.Name : "";
+                    ImGui.PushID(levelObject.Index);
+                    bool objectVisible = !settings.HiddenObjects.Contains(levelObject);
+                    if (ImGui.Checkbox("##objectVisible", ref objectVisible)) {
+                        if (objectVisible) settings.HiddenObjects.Remove(levelObject); else settings.HiddenObjects.Add(levelObject);
+                        viewer.VisibilityChanged();
+                    }
+                    ImGui.SameLine();
+                    bool selected = viewer.Renderer.Selected == levelObject;
+                    if (ImGui.Selectable(levelObject.DisplayName + model, selected)) viewer.SelectAndFocus(levelObject, null);
+                    ImGui.PopID();
+                }
+                ImGui.TreePop();
+            }
+            ImGui.PopID();
+        }
+
+        /// <summary>Visibility checkbox plus tree node for one of a chunk's groups.</summary>
+        private static void RenderGroup(ViewSettings settings, string chunk, string key, string label, Action renderChildren) {
+            ImGui.PushID(key);
+            bool visible = !settings.GroupHidden(chunk, key);
+            if (ImGui.Checkbox("##groupVisible", ref visible)) SetGroupVisible(settings, chunk, key, visible);
+            ImGui.SameLine();
+            if (ImGui.TreeNodeEx(label, ImGuiTreeNodeFlags.SpanAvailWidth)) {
                 renderChildren();
                 ImGui.TreePop();
             }
             ImGui.PopID();
         }
 
-        private static void ToggleGroup(ViewSettings vs, string chunk, string key, bool visible) {
-            if (visible) vs.HiddenGroups.Remove((chunk, key)); else vs.HiddenGroups.Add((chunk, key));
+        private static void SetGroupVisible(ViewSettings settings, string chunk, string key, bool visible) {
+            if (visible) settings.HiddenGroups.Remove((chunk, key)); else settings.HiddenGroups.Add((chunk, key));
         }
 
-        /// <summary>Checkbox + clickable row for one overlay / ground collision mesh.</summary>
-        private void RenderItemCheckbox(ViewSettings vs, string chunk, string key, string label, System.Action onClick) {
+        /// <summary>Visibility checkbox plus a clickable row. Returns true when the row was clicked.</summary>
+        private static bool ItemRow(ViewSettings settings, string chunk, string key, string label) {
             ImGui.PushID(key);
-            bool visible = !vs.HiddenItems.Contains((chunk, key));
+            bool visible = !settings.HiddenItems.Contains((chunk, key));
             if (ImGui.Checkbox("##itemVisible", ref visible)) {
-                if (visible) vs.HiddenItems.Remove((chunk, key)); else vs.HiddenItems.Add((chunk, key));
-                owner.OnVisibilityChanged();
+                if (visible) settings.HiddenItems.Remove((chunk, key)); else settings.HiddenItems.Add((chunk, key));
             }
             ImGui.SameLine();
-            if (ImGui.Selectable(label)) onClick();
+            bool clicked = ImGui.Selectable(label);
             ImGui.PopID();
+            return clicked;
         }
 
-        private void SelectAndMaybeFocus(LevelObject o, DrawItem item, bool focus = false) {
-            owner.OnSelect(o, item);
-            if (focus) owner.OnFocusSelection();
-        }
-
-        private static bool Matches(LevelObject o, string f) {
-            if (f.Length == 0) return true;
-            return o.ClassName.IndexOf(f, System.StringComparison.OrdinalIgnoreCase) >= 0
-                || (o.IdName != null && o.IdName.IndexOf(f, System.StringComparison.OrdinalIgnoreCase) >= 0)
-                || o.Id.ToString() == f;
+        private static bool Matches(LevelObject levelObject, string text) {
+            if (text.Length == 0) return true;
+            return levelObject.ClassName.Contains(text, StringComparison.OrdinalIgnoreCase)
+                || (levelObject.IdName != null && levelObject.IdName.Contains(text, StringComparison.OrdinalIgnoreCase))
+                || levelObject.Id.ToString() == text;
         }
     }
 }
