@@ -195,7 +195,7 @@ namespace Mk2.Viewer
             _levelTree.AfterSelect += (s, e) =>
             {
                 var lv = e.Node?.Tag as LevelDef ?? (e.Node?.Tag is ValueTuple<LevelDef, ChunkDef> t ? t.Item1 : null);
-                if (lv != null && (_scene == null || _scene.Def != lv)) { ShowLevelInfo(lv, null); _rightTabs.SelectedIndex = 0; }
+                if (lv != null && (_scene == null || _scene.Def != lv)) ShowLevelInfo(lv, null);
             };
             var levelHint = new Label { Dock = DockStyle.Top, Height = 34, Text = "Double-click a level to load it all, or a chunk to load just that chunk (+ env).", ForeColor = SystemColors.GrayText };
             var levelPage = new TabPage("Levels");
@@ -238,9 +238,6 @@ namespace Mk2.Viewer
             _props = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, Font = new Font(FontFamily.GenericMonospace, 9f), BackColor = SystemColors.Window };
             _log = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, Font = new Font(FontFamily.GenericMonospace, 9f), BackColor = SystemColors.Window };
             _levelInfo = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, Font = new Font(FontFamily.GenericMonospace, 9f), BackColor = SystemColors.Window };
-            var levelInfoPage = new TabPage("Level");
-            levelInfoPage.Controls.Add(_levelInfo);
-            _rightTabs.TabPages.Add(levelInfoPage);
             var propPage = new TabPage("Properties");
             _refList = new ListBox
             {
@@ -839,11 +836,9 @@ namespace Mk2.Viewer
                         sb.AppendLine($"{ch.Def.Name,-24} {ch.Overlays.Count,3} overlays  {ch.Objects.Count,5} objects  {ch.Grounds.Count,3} grounds  pack: {(ch.Pack == null ? "-" : Path.GetFileName(ch.Pack.SourcePath))}");
                 }
                 _props.Text = sb.ToString().Replace("\n", "\r\n");
-                if (_rightTabs.SelectedIndex == 1) _rightTabs.SelectedIndex = 0;
                 FillLinks(null);
                 return;
             }
-            if (_rightTabs.SelectedIndex == 0) _rightTabs.SelectedIndex = 1;
             if (o != null)
             {
                 sb.AppendLine(o.DisplayName);
