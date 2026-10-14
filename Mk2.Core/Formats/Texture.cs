@@ -29,8 +29,6 @@ namespace Mk2.Formats
         public byte[] Rgba;
         public bool HasAlpha;       // any pixel with alpha < 255
         public bool HasCutout;      // only 0/255 alpha
-        /// <summary>Opaque where dark and see-through where bright: a glow sprite meant to be added, not alpha blended.</summary>
-        public bool LooksAdditive;
 
         public static Texture Decode(byte[] d, string name = null)
         {
@@ -115,23 +113,7 @@ namespace Mk2.Formats
             }
             t.HasAlpha = any;
             t.HasCutout = any && !partial;
-            t.LooksAdditive = any && DarkIsOpaqueAndBrightIsClear(px);
             return t;
-        }
-
-        private static bool DarkIsOpaqueAndBrightIsClear(byte[] pixels)
-        {
-            long darkAlpha = 0, brightAlpha = 0;
-            int darkCount = 0, brightCount = 0;
-            for (int offset = 0; offset < pixels.Length; offset += 4)
-            {
-                int brightness = Math.Max(pixels[offset], Math.Max(pixels[offset + 1], pixels[offset + 2]));
-                if (brightness < 40) { darkAlpha += pixels[offset + 3]; darkCount++; }
-                else if (brightness > 160) { brightAlpha += pixels[offset + 3]; brightCount++; }
-            }
-            int pixelCount = pixels.Length / 4;
-            if (darkCount < pixelCount / 4 || brightCount == 0) return false;
-            return darkAlpha / darkCount > 200 && brightAlpha / brightCount < 100;
         }
 
         private static byte Ps2Alpha(byte a) => a >= 0x80 ? (byte)255 : (byte)(a * 2);

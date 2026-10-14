@@ -376,6 +376,15 @@ namespace Mk2.Viewer.Rendering {
         // ---- frustum culling (planes extracted from the row-vector view-projection matrix)
         private readonly Vector4[] _planes = new Vector4[6];
         private readonly List<DrawItem> _visible = new List<DrawItem>();
+        private readonly List<DrawItem> _blended = new List<DrawItem>();
+
+        private static float DistanceSquared(Vector3 eye, DrawItem item) => Vector3.DistanceSquared(eye, (item.WorldMin + item.WorldMax) * 0.5f);
+
+        private static bool WithinDrawDistance(Vector3 eye, Vector3 min, Vector3 max, ViewSettings s) {
+            if (s.DrawDistance >= ViewSettings.UnlimitedDrawDistance) return true;
+            var nearest = Vector3.Clamp(eye, min, max);
+            return Vector3.DistanceSquared(eye, nearest) <= s.DrawDistance * s.DrawDistance;
+        }
 
         private void ExtractFrustum(Matrix4x4 m) {
             var c1 = new Vector4(m.M11, m.M21, m.M31, m.M41);
@@ -438,7 +447,8 @@ namespace Mk2.Viewer.Rendering {
             _mesh.Set("uFogColor", fogColor);
             _mesh.Set("uFogRange", fogRange);
             _mesh.Set("uFogMax", 0.7f);
-            _mesh.Set("uEye", s.MirrorX ? cam.Position * new Vector3(-1, 1, 1) : cam.Position);
+            var eye = s.MirrorX ? cam.Position * new Vector3(-1, 1, 1) : cam.Position;
+            _mesh.Set("uEye", eye);
             _mesh.Set("uBrightness", s.Brightness);
             GL.ActiveTexture(TextureUnit.Texture0);
 
@@ -447,7 +457,6 @@ namespace Mk2.Viewer.Rendering {
                 GL.Disable(EnableCap.DepthTest);
                 GL.DepthMask(false);
                 GL.Disable(EnableCap.CullFace);
-                var eye = s.MirrorX ? cam.Position * new Vector3(-1, 1, 1) : cam.Position;
                 foreach (var it in Items) {
                     if (it.Kind != ItemKind.EnvDome || !Visible(it, s)) continue;
                     var c = (it.Model.Min + it.Model.Max) * 0.5f;
@@ -455,6 +464,7 @@ namespace Mk2.Viewer.Rendering {
                     DrawModel(it, w, s, time, pass: 0, forceNoFog: true);
                     GL.Enable(EnableCap.Blend);
                     DrawModel(it, w, s, time, pass: 1, forceNoFog: true);
+                    DrawModel(it, w, s, time, pass: 2, forceNoFog: true);
                     GL.Disable(EnableCap.Blend);
                     GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
                 }
@@ -470,7 +480,8 @@ namespace Mk2.Viewer.Rendering {
             ExtractFrustum(viewProj);
             _visible.Clear();
             foreach (var it in Items)
-                if (it.Kind != ItemKind.EnvDome && Visible(it, s) && InFrustum(it.WorldMin, it.WorldMax)) _visible.Add(it);
+                if (it.Kind != ItemKind.EnvDome && Visible(it, s) && InFrustum(it.WorldMin, it.WorldMax) && WithinDrawDistance(eye, it.WorldMin, it.WorldMax, s))
+                    _visible.Add(it);
             GL.Disable(EnableCap.Blend);
             int opaqueIndex = 0;
             foreach (var it in _visible) {
@@ -494,7 +505,7 @@ namespace Mk2.Viewer.Rendering {
                     bool shown = collision.Object == null
                         ? s.GroundVisible(collision.Chunk.Def.Name, collision.Name)
                         : s.ObjectCollisionVisible(collision.Object);
-                    if (!shown || !InFrustum(collision.WorldMin, collision.WorldMax)) continue;
+                    if (!shown || !InFrustum(collision.WorldMin, collision.WorldMax) || !WithinDrawDistance(eye, collision.WorldMin, collision.WorldMax, s)) continue;
                     _mesh.Set("uModel", collision.World);
                     collision.Mesh.Draw();
                     LastDrawnTriangles += collision.Triangles;
@@ -504,17 +515,18 @@ namespace Mk2.Viewer.Rendering {
             }
             CheckGl("Collision pass");
 
-            // 4. Transparent geometry (no sorting; depth writes off), then the depth of its mostly solid pixels
-            //    so that lines behind it stay hidden.
+            // 4. Blended geometry, farthest first. Normally blended surfaces write depth so nothing behind them shows
+            //    through; added and subtracted ones don't.
             if (s.Transparency) {
+                _blended.Clear();
+                _blended.AddRange(_visible);
+                _blended.Sort((first, second) => DistanceSquared(eye, second).CompareTo(DistanceSquared(eye, first)));
                 GL.Enable(EnableCap.Blend);
+                foreach (var it in _blended) DrawModel(it, it.World, s, time, pass: 1);
                 GL.DepthMask(false);
-                foreach (var it in _visible) DrawModel(it, it.World, s, time, pass: 1);
+                foreach (var it in _blended) DrawModel(it, it.World, s, time, pass: 2);
                 GL.DepthMask(true);
                 GL.Disable(EnableCap.Blend);
-                GL.ColorMask(false, false, false, false);
-                foreach (var it in _visible) DrawModel(it, it.World, s, time, pass: 2);
-                GL.ColorMask(true, true, true, true);
             }
             CheckGl("Transparent pass");
 
@@ -555,11 +567,9 @@ namespace Mk2.Viewer.Rendering {
             DrawSkeleton(s);
             CheckGl("Skeleton");
             if (_selectionLines != null) {
-                GL.Disable(EnableCap.DepthTest);
-                float pl = 0.6f + 0.4f * MathF.Sin((float)(DateTime.Now - _start).TotalSeconds * 4f);
-                _lines.Set("uTint", new Vector4(1, 1, pl, 1));
+                float pulse = 0.6f + 0.4f * MathF.Sin((float)(DateTime.Now - _start).TotalSeconds * 4f);
+                _lines.Set("uTint", new Vector4(1, 1, pulse, 1));
                 _selectionLines.Draw();
-                GL.Enable(EnableCap.DepthTest);
             }
             CheckGl("Selection lines");
             GL.BindVertexArray(0);
@@ -620,7 +630,7 @@ namespace Mk2.Viewer.Rendering {
             if (s.CullBackfaces) GL.Enable(EnableCap.CullFace);
         }
 
-        /// <summary>pass 0 = opaque and alpha-tested parts, 1 = blended parts, 2 = depth only for blended parts that look solid.</summary>
+        /// <summary>pass 0 = opaque and alpha-tested parts, 1 = normally blended parts, 2 = added and subtracted parts.</summary>
         private void DrawModel(DrawItem item, Matrix4x4 world, ViewSettings s, float time, int pass, bool forceNoFog = false) {
             var m = item.Model;
             bool prelit = item.Kind != ItemKind.Object && s.VertexColors;
@@ -629,8 +639,8 @@ namespace Mk2.Viewer.Rendering {
                 if (p.IsCollisionComponent && !s.ModelCollisionComponents) continue;
                 if (p.IsFragment && !s.Fragments) continue;
                 bool transparent = s.Transparency && p.Transparent;
-                if ((pass >= 1) != transparent) continue;
-                if (pass == 2 && !p.WritesDepthWhenBlended) continue;
+                int partPass = !transparent ? 0 : p.WritesDepthWhenBlended ? 1 : 2;
+                if (partPass != pass) continue;
                 if (!modelSet) {
                     _mesh.Set("uModel", world);
                     modelSet = true;
@@ -643,17 +653,16 @@ namespace Mk2.Viewer.Rendering {
                 float aref = 0f;
                 if (useTex && (mat.AlphaTest || p.TextureIsCutout || (p.TextureHasAlpha && !transparent)))
                     aref = mat.AlphaRef > 0 ? mat.AlphaRef : 0.5f;
-                if (pass == 1) aref = p.TextureAdditive ? 0f : 0.01f;
-                if (pass == 2) aref = 0.5f;
+                if (pass == 1) aref = 0.05f;
+                if (pass == 2) aref = 0.01f;
                 _mesh.Set("uAlphaRef", aref);
                 var tint = p.IsCollisionComponent ? new Vector4(0.4f, 1f, 0.4f, 1f) : item.Tint;
                 _mesh.Set("uTint", tint);
                 var off = mat.Scrolls ? new Vector2(Frac(mat.ScrollU * time), Frac(mat.ScrollV * time)) : Vector2.Zero;
                 _mesh.Set("uUVOffset", off);
                 if (forceNoFog) _mesh.Set("uFog", false);
-                if (pass == 1) {
-                    if (p.TextureAdditive) GL.BlendFunc(BlendingFactor.One, BlendingFactor.One);
-                    else if (mat.Blend == BlendMode.Additive) GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.One);
+                if (pass != 0) {
+                    if (mat.Blend == BlendMode.Additive) GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.One);
                     else if (mat.Blend == BlendMode.Subtractive) {
                         GL.BlendEquation(BlendEquationMode.FuncReverseSubtract);
                         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.One);
@@ -665,7 +674,7 @@ namespace Mk2.Viewer.Rendering {
                 p.Mesh.Draw();
                 if (DebugStageError != null) CheckGl($"  Mesh.Draw (vao={p.Mesh.Vao}, idx={p.Mesh.IndexCount})");
                 LastDrawnTriangles += p.Triangles;
-                if (pass == 1 && mat.Blend == BlendMode.Subtractive) GL.BlendEquation(BlendEquationMode.FuncAdd);
+                if (pass != 0 && mat.Blend == BlendMode.Subtractive) GL.BlendEquation(BlendEquationMode.FuncAdd);
                 if (forceNoFog) _mesh.Set("uFog", s.Fog);
             }
         }

@@ -20,6 +20,8 @@ namespace Mk2.Viewer.Rendering
         public float Brightness = 1.2f;
 
         public bool CameraInfo = true;
+        public const float UnlimitedDrawDistance = 200000f;
+        public float DrawDistance = UnlimitedDrawDistance;
 
         public bool Wireframe = false;
         public bool CullBackfaces = false;

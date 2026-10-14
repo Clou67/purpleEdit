@@ -21,12 +21,15 @@ namespace Mk2.Viewer.Frames {
         private readonly LogFrame log;
         private readonly MainViewFrame mainView;
         private readonly ModelViewerFrame modelViewer;
+        private readonly TextureViewerFrame textureViewer;
 
         private bool dockLayoutBuilt;
         private string levelFilter = "";
         private string packFilter = "";
 
         public ViewSettings ViewSettings => Viewer.ViewSettings;
+
+        public void ShowTexture(string name) => textureViewer.Show(name);
 
         public MainFrame(Window viewer) {
             Viewer = viewer;
@@ -37,8 +40,9 @@ namespace Mk2.Viewer.Frames {
             properties = new PropertiesFrame(this);
             log = new LogFrame(this) { isOpen = false };
             modelViewer = new ModelViewerFrame(this);
+            textureViewer = new TextureViewerFrame(this);
             mainView = new MainViewFrame(this);
-            frames.AddRange(new Frame[] { renderModes, browser, properties, log, modelViewer, mainView });
+            frames.AddRange(new Frame[] { renderModes, browser, properties, log, modelViewer, textureViewer, mainView });
 
             viewer.Resize += eventArgs => controller.WindowResized(viewer.ClientSize.X, viewer.ClientSize.Y);
             viewer.MouseWheel += eventArgs => controller.MouseScroll(new OpenTK.Mathematics.Vector2(eventArgs.OffsetX, eventArgs.OffsetY));
@@ -86,6 +90,7 @@ namespace Mk2.Viewer.Frames {
             ImGuiP.DockBuilderSplitNode(center, ImGuiDir.Right, 0.25f, &right, &center);
             ImGuiP.DockBuilderSplitNode(center, ImGuiDir.Down, 0.22f, &bottom, &center);
             ImGuiP.DockBuilderSplitNode(right, ImGuiDir.Down, 0.6f, &rightBottom, &right);
+            ImGuiP.DockBuilderDockWindow(textureViewer.WindowTitle, center);
             ImGuiP.DockBuilderDockWindow(modelViewer.WindowTitle, center);
             ImGuiP.DockBuilderDockWindow(mainView.WindowTitle, center);
             ImGuiP.DockBuilderDockWindow(browser.WindowTitle, left);
@@ -117,6 +122,7 @@ namespace Mk2.Viewer.Frames {
                 MenuToggle("Render", renderModes);
                 MenuToggle("Browser", browser);
                 MenuToggle("Model Viewer", modelViewer);
+                MenuToggle("Texture Viewer", textureViewer);
                 MenuToggle("Properties", properties);
                 MenuToggle("Log", log);
                 if (ImGui.MenuItem("Reset layout")) dockLayoutBuilt = false;

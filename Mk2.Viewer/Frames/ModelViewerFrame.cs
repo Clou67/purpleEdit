@@ -62,6 +62,7 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
 
             ImGui.BeginChild("##modelViewerRight", Vec2.Zero, ImGuiChildFlags.None);
             RenderControls();
+            RenderTextureStrip();
             ImGui.Separator();
             RenderViewport();
             ImGui.EndChild();
@@ -124,6 +125,32 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
         private void SelectBone(int boneIndex) {
             renderer.SetSelectedBone(boneIndex);
             owner.Viewer.ShowProperties(PropertiesView.ForBone(animation, boneIndex, renderer.Anim));
+        }
+
+        private const float ThumbnailSize = 48f;
+
+        /// <summary>The current model's textures as thumbnails; clicking one opens it in the Texture Viewer.</summary>
+        private void RenderTextureStrip() {
+            if (currentModel == null) return;
+            var textures = renderer.Items.SelectMany(item => item.Model.Parts)
+                                   .Where(part => part.Texture != 0 && !part.IsCollisionComponent)
+                                   .GroupBy(part => part.Material.TextureName, StringComparer.OrdinalIgnoreCase)
+                                   .Select(group => (name: group.Key, texture: group.First().Texture)).ToList();
+            if (textures.Count == 0 || !ImGui.CollapsingHeader($"Textures ({textures.Count})")) return;
+            float right = ImGui.GetCursorScreenPos().X + ImGui.GetContentRegionAvail().X;
+            for (int index = 0; index < textures.Count; index++) {
+                var (name, texture) = textures[index];
+                ImGui.PushID(index);
+                bool clicked;
+                unsafe {
+                    clicked = ImGui.ImageButton("##thumbnail", new ImTextureRef(default, (ulong)(uint)texture), new Vec2(ThumbnailSize), new Vec2(0, 0), new Vec2(1, 1));
+                }
+                if (clicked) owner.ShowTexture(name);
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip(name);
+                ImGui.PopID();
+                float nextRight = ImGui.GetItemRectMax().X + ImGui.GetStyle().ItemSpacing.X + ThumbnailSize;
+                if (index + 1 < textures.Count && nextRight < right) ImGui.SameLine();
+            }
         }
 
         private void RenderControls() {

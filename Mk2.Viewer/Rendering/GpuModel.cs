@@ -18,11 +18,10 @@ namespace Mk2.Viewer.Rendering
         public bool IsFragment;
         public string ComponentName;
         public int Triangles;
-        public bool Transparent => Material.Blend != BlendMode.Opaque || VertexAlpha || TextureAdditive
+        public bool Transparent => Material.Blend != BlendMode.Opaque || VertexAlpha
                                    || (TextureHasAlpha && !Material.AlphaTest && !TextureIsCutout);
-        public bool TextureAdditive;
-        /// <summary>Blended normally, so its mostly solid pixels should still hide what is behind them.</summary>
-        public bool WritesDepthWhenBlended => Material.Blend == BlendMode.Opaque && !TextureAdditive;
+        /// <summary>Blended normally (not added or subtracted), so its visible pixels should hide what is behind them.</summary>
+        public bool WritesDepthWhenBlended => Material.Blend == BlendMode.Opaque;
         /// <summary>Some vertices fade out (overlay edges blending into the ground below).</summary>
         public bool VertexAlpha;
         public bool TextureIsCutout;
@@ -95,7 +94,6 @@ namespace Mk2.Viewer.Rendering
                     Texture = tex.Id,
                     TextureHasAlpha = tex.HasAlpha,
                     TextureIsCutout = tex.Cutout,
-                    TextureAdditive = tex.Additive,
                     VertexAlpha = verts.Any(vertex => vertex.Color.W < 0.95f),
                     IsCollisionComponent = comp.IsCollision,
                     IsFragment = comp.IsFragment,
@@ -199,7 +197,6 @@ namespace Mk2.Viewer.Rendering
         public int Id;
         public bool HasAlpha;
         public bool Cutout;
-        public bool Additive;
     }
 
     /// <summary>GL textures keyed by texture name, decoded through the scene's AssetCache.</summary>
@@ -240,7 +237,7 @@ namespace Mk2.Viewer.Rendering
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
-            return new TexInfo { Id = id, HasAlpha = t.HasAlpha, Cutout = t.HasCutout, Additive = t.LooksAdditive };
+            return new TexInfo { Id = id, HasAlpha = t.HasAlpha, Cutout = t.HasCutout };
         }
 
         public void Dispose()
