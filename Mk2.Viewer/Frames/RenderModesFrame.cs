@@ -19,6 +19,7 @@ namespace Mk2.Viewer.ImGuiUi.Frames
             ImGui.SeparatorText("Geometry");
             ImGui.Checkbox("Overlays", ref settings.Overlays);
             ImGui.Checkbox("Objects", ref settings.Objects);
+            ImGui.Checkbox("Prop markers", ref settings.PropMarkers);
             ImGui.Checkbox("Sky dome", ref settings.EnvDome);
             ImGui.Checkbox("Ground collision", ref settings.GroundCollision);
             ImGui.Checkbox("Object collision", ref settings.ObjectCollision);

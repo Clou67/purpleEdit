@@ -104,6 +104,8 @@ namespace Mk2.Viewer
                 details.AppendLine($"scale     {Format(levelObject.Scale)}{(levelObject.ScaleIsVolume ? "  (swarm volume)" : "")}");
                 if (levelObject.Color.HasValue) details.AppendLine($"color     {Format(levelObject.Color.Value)}");
                 if (levelObject.Zone != null) details.AppendLine($"zone      {levelObject.Zone}");
+                var actions = levelObject.Section != null ? levelObject.ScriptActions() : new List<string>();
+                if (actions.Count > 0) details.AppendLine($"commands  {string.Join(", ", actions)}");
                 if (modelDb != null)
                 {
                     var chain = modelDb.AliasChain(levelObject.ClassName).ToList();

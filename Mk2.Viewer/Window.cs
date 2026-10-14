@@ -244,7 +244,10 @@ namespace Mk2.Viewer {
             Log($"Fog: colour {string.Join(" ", level.FogColor ?? Array.Empty<float>())}, planes {level.FogNear} .. {level.FogFar}");
         }
 
-        /// <summary>Looks at the first checkpoint of the start chunk from its respawn camera, or frames the start chunk.</summary>
+        /// <summary>
+        /// Looks at the first checkpoint of the start chunk from above and behind it, facing the way its respawn
+        /// camera faces when it has one. Without a checkpoint, frames the start chunk.
+        /// </summary>
         private void PlaceCameraAtStart(LevelScene scene) {
             var level = scene.Def;
             var startChunk = scene.Chunks.FirstOrDefault(chunk => string.Equals(chunk.Def.Name, level.StartChunk, StringComparison.OrdinalIgnoreCase))
@@ -254,9 +257,15 @@ namespace Mk2.Viewer {
             var checkpoint = startChunk.Objects.Where(levelObject => levelObject.Category == ObjectCategory.Checkpoint)
                                                .OrderBy(levelObject => levelObject.Index).FirstOrDefault();
             if (checkpoint != null) {
+                var facing = new Vec3(0, 0, -1);
                 var respawnCamera = checkpoint.Shapes.FirstOrDefault(shape => shape.Kind == ShapeKind.CameraLine && shape.Points.Count == 2);
-                if (respawnCamera != null) LookAtWorld(respawnCamera.Points[0], respawnCamera.Points[1]);
-                else LookAtWorld(checkpoint.Position + new Vec3(0, 400, 900), checkpoint.Position);
+                if (respawnCamera != null) {
+                    var look = respawnCamera.Points[1] - respawnCamera.Points[0];
+                    look.Y = 0;
+                    if (look.LengthSquared() > 1f) facing = Vec3.Normalize(look);
+                }
+                var target = checkpoint.Position + new Vec3(0, 150, 0);
+                LookAtWorld(target - facing * 900 + new Vec3(0, 450, 0), target);
                 Camera.Speed = 2000f;
                 return;
             }
@@ -335,6 +344,18 @@ namespace Mk2.Viewer {
             float speed = Camera.Speed;
             FrameWorld(min, max);
             Camera.Speed = Math.Min(speed, Camera.Speed * 2);
+        }
+
+        public Vec3 CameraWorldPosition => ToDisplay(Camera.Position);
+
+        /// <summary>Camera yaw and pitch in degrees, in world (unmirrored) space.</summary>
+        public Vec2 CameraWorldAngles {
+            get {
+                float yaw = ViewSettings.MirrorX ? -Camera.Yaw : Camera.Yaw;
+                float degrees = 180f / MathF.PI;
+                float wrappedYaw = (yaw * degrees % 360f + 540f) % 360f - 180f;
+                return new Vec2(wrappedYaw, Camera.Pitch * degrees);
+            }
         }
 
         public void FrameScene() => FrameWorld(Renderer.SceneMin, Renderer.SceneMax);

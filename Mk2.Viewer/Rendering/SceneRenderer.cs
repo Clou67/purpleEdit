@@ -493,7 +493,7 @@ namespace Mk2.Viewer.Rendering {
                 foreach (var collision in Collisions) {
                     bool shown = collision.Object == null
                         ? s.GroundVisible(collision.Chunk.Def.Name, collision.Name)
-                        : s.ObjectCollision && s.ObjectVisible(collision.Object);
+                        : s.ObjectCollisionVisible(collision.Object);
                     if (!shown || !InFrustum(collision.WorldMin, collision.WorldMax)) continue;
                     _mesh.Set("uModel", collision.World);
                     collision.Mesh.Draw();
@@ -527,9 +527,9 @@ namespace Mk2.Viewer.Rendering {
             _lines.Set("uTint", Vector4.One);
             if (Scene == null || Items.Count == 0) _gridLines?.Draw();
             foreach (var entry in _shapeLines)
-                if (s.CategoryBatchVisible(entry.Key.chunk, entry.Key.cat)) entry.Value.Draw();
+                if (s.CategoryBatchVisible(entry.Key.chunk, entry.Key.cat) && HelpersVisible(entry.Key.cat, s)) entry.Value.Draw();
             foreach (var entry in _markerLines)
-                if (s.CategoryBatchVisible(entry.Key.chunk, entry.Key.cat)) entry.Value.Draw();
+                if (s.CategoryBatchVisible(entry.Key.chunk, entry.Key.cat) && HelpersVisible(entry.Key.cat, s)) entry.Value.Draw();
             if (_selectionFill != null) {
                 float pulse = 0.5f + 0.5f * MathF.Sin((float)(DateTime.Now - _start).TotalSeconds * 4f);
                 _mesh.Use();
@@ -714,37 +714,61 @@ namespace Mk2.Viewer.Rendering {
             }
 
             if (Scene != null) {
-                foreach (var ch in Scene.Chunks) {
-                    if (s.HiddenChunks.Contains(ch.Def.Name)) continue;
-                    foreach (var o in ch.Objects) {
-                        if (!s.ObjectVisible(o)) continue;
-                        if (!ch.ObjectModels.ContainsKey(o) && RaySphere(origin, dir, o.Position, 70, out float t0))
-                            Consider(t0, null, o, o.DisplayName);
-                        foreach (var sh in o.Shapes) {
-                            switch (sh.Kind) {
-                                case ShapeKind.Sphere:
-                                    if (RaySphereShell(origin, dir, sh.Center, sh.Radius, out float ts)) Consider(ts, null, o, o.DisplayName);
-                                    break;
-                                case ShapeKind.Box: {
-                                        var m = LevelObject.RotationPYR(sh.Rotation) * Matrix4x4.CreateTranslation(sh.Center);
-                                        if (Matrix4x4.Invert(m, out var inv)) {
-                                            var lo = Vector3.Transform(origin, inv);
-                                            var ld = Vector3.TransformNormal(dir, inv);
-                                            if (RayAabb(lo, ld, -sh.Size * 0.5f, sh.Size * 0.5f, out float tbx)) Consider(tbx, null, o, o.DisplayName);
-                                        }
-                                        break;
-                                    }
-                                default:
-                                    foreach (var p in sh.Points)
-                                        if (RaySphere(origin, dir, p, 50, out float tp)) Consider(tp, null, o, o.DisplayName);
-                                    break;
-                            }
+                foreach (var chunk in Scene.Chunks) {
+                    if (s.HiddenChunks.Contains(chunk.Def.Name)) continue;
+                    foreach (var levelObject in chunk.Objects) {
+                        if (!s.ObjectVisible(levelObject) || !HelpersVisible(levelObject.Category, s)) continue;
+                        if (!chunk.ObjectModels.ContainsKey(levelObject) && RaySphere(origin, dir, levelObject.Position, 60, out float markerDistance))
+                            Consider(Math.Max(0f, markerDistance - HelperPickBias), null, levelObject, levelObject.DisplayName);
+                        var segments = PickSegments(levelObject);
+                        for (int index = 0; index + 1 < segments.Length; index += 2) {
+                            if (RaySegmentHit(origin, dir, segments[index], segments[index + 1], out float lineDistance))
+                                Consider(Math.Max(0f, lineDistance - HelperPickBias), null, levelObject, levelObject.DisplayName);
                         }
                     }
                 }
             }
             return best;
         }
+
+        /// <summary>Lines and markers win over a surface they sit on, as long as they are within this distance of it.</summary>
+        private const float HelperPickBias = 100f;
+
+        private readonly Dictionary<LevelObject, Vector3[]> pickSegments = new Dictionary<LevelObject, Vector3[]>();
+
+        /// <summary>Endpoint pairs of the lines drawn for an object's shapes.</summary>
+        private Vector3[] PickSegments(LevelObject levelObject) {
+            if (pickSegments.TryGetValue(levelObject, out var segments)) return segments;
+            var lineData = new List<float>();
+            ShapeLines(lineData, levelObject, Vector4.One);
+            segments = new Vector3[lineData.Count / 7];
+            for (int index = 0; index < segments.Length; index++)
+                segments[index] = new Vector3(lineData[index * 7], lineData[index * 7 + 1], lineData[index * 7 + 2]);
+            pickSegments[levelObject] = segments;
+            return segments;
+        }
+
+        /// <summary>True when the ray passes within a few pixels' worth of a line segment; distance is along the ray.</summary>
+        private static bool RaySegmentHit(Vector3 origin, Vector3 direction, Vector3 start, Vector3 end, out float distance) {
+            distance = 0;
+            var segment = end - start;
+            var offset = origin - start;
+            float segmentLengthSquared = Vector3.Dot(segment, segment);
+            float alignment = Vector3.Dot(direction, segment);
+            float rayOffset = Vector3.Dot(direction, offset);
+            float segmentOffset = Vector3.Dot(segment, offset);
+            float denominator = segmentLengthSquared - alignment * alignment;
+            float along = denominator > 1e-6f ? Math.Clamp((segmentOffset - alignment * rayOffset) / denominator, 0f, 1f) : 0f;
+            var closestOnSegment = start + segment * along;
+            distance = Vector3.Dot(closestOnSegment - origin, direction);
+            if (distance <= 0) return false;
+            var closestOnRay = origin + direction * distance;
+            float tolerance = Math.Max(6f, distance * 0.008f);
+            return Vector3.DistanceSquared(closestOnRay, closestOnSegment) <= tolerance * tolerance;
+        }
+
+        /// <summary>Prop markers and shapes are optional; every other category always shows its helpers.</summary>
+        private static bool HelpersVisible(ObjectCategory category, ViewSettings s) => category != ObjectCategory.Prop || s.PropMarkers;
 
         private static bool RayAabb(Vector3 o, Vector3 d, Vector3 min, Vector3 max, out float t) {
             float tmin = 0, tmax = float.MaxValue;
@@ -799,13 +823,6 @@ namespace Mk2.Viewer.Rendering {
             return t >= 0;
         }
 
-        /// <summary>Only hits when the camera is outside the sphere (so big trigger spheres don't swallow every click).</summary>
-        private static bool RaySphereShell(Vector3 o, Vector3 d, Vector3 c, float r, out float t) {
-            t = 0;
-            if (Vector3.DistanceSquared(o, c) < r * r) return false;
-            return RaySphere(o, d, c, r, out t);
-        }
-
         // ---------------------------------------------------------------- screenshots
 
         public static byte[] ReadPixels(int w, int h) {
@@ -827,6 +844,7 @@ namespace Mk2.Viewer.Rendering {
             foreach (var m in _models.Values) m.Dispose();
             _models.Clear();
             _pickTris.Clear();
+            pickSegments.Clear();
             foreach (var c in Collisions) c.Mesh.Dispose();
             Collisions.Clear();
             foreach (var l in _shapeLines.Values) l.Dispose();

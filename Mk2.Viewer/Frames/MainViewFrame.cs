@@ -31,7 +31,20 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
             unsafe {
                 ImGui.Image(new ImTextureRef(default, (ulong)(uint)renderTarget.ColorTexture), new Vec2(width, height), new Vec2(0, 1), new Vec2(1, 0));
             }
-            HandleInput(ImGui.IsItemHovered(), origin, width, height);
+            bool hovered = ImGui.IsItemHovered();
+            DrawCameraReadout(origin);
+            HandleInput(hovered, origin, width, height);
+        }
+
+        private void DrawCameraReadout(Vec2 origin) {
+            var viewer = owner.Viewer;
+            var position = viewer.CameraWorldPosition;
+            var angles = viewer.CameraWorldAngles;
+            string text = $"{position.X:0} {position.Y:0} {position.Z:0}   yaw {angles.X:0.0}   pitch {angles.Y:0.0}";
+            var drawList = ImGui.GetWindowDrawList();
+            var textPosition = origin + new Vec2(8, 6);
+            drawList.AddRectFilled(textPosition - new Vec2(4, 2), textPosition + ImGui.CalcTextSize(text) + new Vec2(4, 2), 0x99000000);
+            drawList.AddText(textPosition, 0xFFFFFFFF, text);
         }
 
         private void RenderSceneOffscreen(int width, int height) {

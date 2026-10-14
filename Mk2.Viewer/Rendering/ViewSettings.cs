@@ -7,6 +7,7 @@ namespace Mk2.Viewer.Rendering
     {
         public bool Overlays = true;
         public bool Objects = true;
+        public bool PropMarkers = false;
         public bool EnvDome = true;
         public bool GroundCollision = false;
         public bool ObjectCollision = false;
@@ -59,6 +60,9 @@ namespace Mk2.Viewer.Rendering
 
         public bool ObjectVisible(LevelObject levelObject) =>
             CategoryBatchVisible(levelObject.ChunkName, levelObject.Category) && !HiddenObjects.Contains(levelObject);
+
+        public bool ObjectCollisionVisible(LevelObject levelObject) =>
+            ObjectCollision && !HiddenChunks.Contains(levelObject.ChunkName) && !HiddenObjects.Contains(levelObject);
 
         public void ClearSceneVisibility()
         {

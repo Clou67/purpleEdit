@@ -53,6 +53,41 @@ namespace Mk2.Game
             }
         }
 
+        private static readonly HashSet<string> ScriptWords = new(StringComparer.OrdinalIgnoreCase)
+        { "send", "delay", "wait", "if", "then", "else", "and", "or", "not", "true", "false", "on", "off" };
+
+        private static readonly char[] StatementSeparators = { ';', '(', ')' };
+        private static readonly char[] TokenSeparators = { ' ', ',', '\t', '=' };
+
+        /// <summary>
+        /// The command names used in this object's ScriptCommands, in order of first use: the word after "send",
+        /// or a bare command that starts a statement ("send Autosave 12; delay 2 (KillHero)" → Autosave, KillHero).
+        /// </summary>
+        public List<string> ScriptActions()
+        {
+            var actions = new List<string>();
+            if (Section == null) return actions;
+            void Add(string token)
+            {
+                if (token.Length > 0 && char.IsLetter(token[0]) && !ScriptWords.Contains(token)
+                    && !actions.Contains(token, StringComparer.OrdinalIgnoreCase)) actions.Add(token);
+            }
+            foreach (var field in Section.Fields)
+                foreach (var command in field.Children)
+                {
+                    if (!string.Equals(command.Key, "ScriptCommand", StringComparison.OrdinalIgnoreCase)) continue;
+                    foreach (var statement in command.JoinedValues.Split(StatementSeparators, StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        var tokens = statement.Split(TokenSeparators, StringSplitOptions.RemoveEmptyEntries);
+                        if (tokens.Length == 0) continue;
+                        Add(tokens[0]);
+                        for (int index = 0; index + 1 < tokens.Length; index++)
+                            if (tokens[index].Equals("send", StringComparison.OrdinalIgnoreCase)) Add(tokens[index + 1]);
+                    }
+                }
+            return actions;
+        }
+
         /// <summary>
         /// World matrix (System.Numerics row-vector convention, v' = v * M), matching
         /// Matrix::SetRotationPYR in the game: M = Pitch(x) * Yaw(y) * Roll(z) where each

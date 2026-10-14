@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Hexa.NET.ImGui;
 using Mk2.Game;
@@ -10,6 +11,8 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
         protected override string frameName { get; set; }
 
         private string filter = "";
+        private LevelScene actionsScene;
+        private readonly Dictionary<LevelObject, List<string>> actionsByObject = new Dictionary<LevelObject, List<string>>();
 
         public BrowserFrame(MainFrame owner) : base(owner, "Browser") { }
 
@@ -21,6 +24,11 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
             ImGui.SetNextItemWidth(-1);
             ImGui.InputTextWithHint("##sceneFilter", "Filter", ref filter, 128);
             ImGui.Separator();
+
+            if (!ReferenceEquals(scene, actionsScene)) {
+                actionsScene = scene;
+                actionsByObject.Clear();
+            }
 
             var settings = viewer.ViewSettings;
             string activeFilter = filter.Trim();
@@ -80,8 +88,7 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
             ImGui.PopID();
         }
 
-        private void RenderCategory(SceneChunk chunk, ObjectCategory category, System.Collections.Generic.List<LevelObject> objects, ViewSettings settings, bool expand) {
-            var viewer = owner.Viewer;
+        private void RenderCategory(SceneChunk chunk, ObjectCategory category, List<LevelObject> objects, ViewSettings settings, bool expand) {
             string chunkName = chunk.Def.Name;
             ImGui.PushID(category.ToString());
             bool categoryVisible = !settings.HiddenChunkCategories.Contains((chunkName, category));
@@ -92,22 +99,63 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
             ImGui.SameLine();
             var flags = ImGuiTreeNodeFlags.SpanAvailWidth | (expand ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None);
             if (ImGui.TreeNodeEx($"{category} ({objects.Count})", flags)) {
-                foreach (var levelObject in objects) {
-                    string model = chunk.ObjectModels.TryGetValue(levelObject, out var loadedModel) ? "  → " + loadedModel.Name : "";
-                    ImGui.PushID(levelObject.Index);
-                    bool objectVisible = !settings.HiddenObjects.Contains(levelObject);
-                    if (ImGui.Checkbox("##objectVisible", ref objectVisible)) {
-                        if (objectVisible) settings.HiddenObjects.Remove(levelObject); else settings.HiddenObjects.Add(levelObject);
-                        viewer.VisibilityChanged();
-                    }
-                    ImGui.SameLine();
-                    bool selected = viewer.Renderer.Selected == levelObject;
-                    if (ImGui.Selectable(levelObject.DisplayName + model, selected)) viewer.SelectAndFocus(levelObject, null);
-                    ImGui.PopID();
-                }
+                bool groupByAction = (category == ObjectCategory.Trigger || category == ObjectCategory.Logic)
+                                     && objects.Any(levelObject => Actions(levelObject).Count > 0);
+                if (groupByAction) RenderByAction(chunk, objects, settings, expand);
+                else foreach (var levelObject in objects) RenderObject(chunk, levelObject, settings);
                 ImGui.TreePop();
             }
             ImGui.PopID();
+        }
+
+        /// <summary>One node per script command; an object with several commands appears under each.</summary>
+        private void RenderByAction(SceneChunk chunk, List<LevelObject> objects, ViewSettings settings, bool expand) {
+            var groups = objects.SelectMany(levelObject => Actions(levelObject).DefaultIfEmpty("No script").Select(action => (action, levelObject)))
+                                .GroupBy(entry => entry.action, StringComparer.OrdinalIgnoreCase)
+                                .OrderBy(group => group.Key == "No script" ? 1 : 0).ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase);
+            foreach (var group in groups) {
+                var members = group.Select(entry => entry.levelObject).ToList();
+                ImGui.PushID(group.Key);
+                bool anyVisible = members.Any(levelObject => !settings.HiddenObjects.Contains(levelObject));
+                if (ImGui.Checkbox("##actionVisible", ref anyVisible)) {
+                    foreach (var levelObject in members) {
+                        if (anyVisible) settings.HiddenObjects.Remove(levelObject); else settings.HiddenObjects.Add(levelObject);
+                    }
+                    owner.Viewer.VisibilityChanged();
+                }
+                ImGui.SameLine();
+                var flags = ImGuiTreeNodeFlags.SpanAvailWidth | (expand ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None);
+                if (ImGui.TreeNodeEx($"{group.Key} ({members.Count})", flags)) {
+                    foreach (var levelObject in members) RenderObject(chunk, levelObject, settings);
+                    ImGui.TreePop();
+                }
+                ImGui.PopID();
+            }
+        }
+
+        private void RenderObject(SceneChunk chunk, LevelObject levelObject, ViewSettings settings) {
+            var viewer = owner.Viewer;
+            string model = chunk.ObjectModels.TryGetValue(levelObject, out var loadedModel) ? "  → " + loadedModel.Name : "";
+            var actions = Actions(levelObject);
+            string actionText = actions.Count > 0 ? "  — " + string.Join(", ", actions) : "";
+            ImGui.PushID(levelObject.Index);
+            bool objectVisible = !settings.HiddenObjects.Contains(levelObject);
+            if (ImGui.Checkbox("##objectVisible", ref objectVisible)) {
+                if (objectVisible) settings.HiddenObjects.Remove(levelObject); else settings.HiddenObjects.Add(levelObject);
+                viewer.VisibilityChanged();
+            }
+            ImGui.SameLine();
+            bool selected = viewer.Renderer.Selected == levelObject;
+            if (ImGui.Selectable(levelObject.DisplayName + model + actionText, selected)) viewer.SelectAndFocus(levelObject, null);
+            ImGui.PopID();
+        }
+
+        private List<string> Actions(LevelObject levelObject) {
+            if (!actionsByObject.TryGetValue(levelObject, out var actions)) {
+                actions = levelObject.ScriptActions();
+                actionsByObject[levelObject] = actions;
+            }
+            return actions;
         }
 
         /// <summary>Visibility checkbox plus tree node for one of a chunk's groups.</summary>
@@ -140,11 +188,12 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
             return clicked;
         }
 
-        private static bool Matches(LevelObject levelObject, string text) {
+        private bool Matches(LevelObject levelObject, string text) {
             if (text.Length == 0) return true;
             return levelObject.ClassName.Contains(text, StringComparison.OrdinalIgnoreCase)
                 || (levelObject.IdName != null && levelObject.IdName.Contains(text, StringComparison.OrdinalIgnoreCase))
-                || levelObject.Id.ToString() == text;
+                || levelObject.Id.ToString() == text
+                || Actions(levelObject).Any(action => action.Contains(text, StringComparison.OrdinalIgnoreCase));
         }
     }
 }

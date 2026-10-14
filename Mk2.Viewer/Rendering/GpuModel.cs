@@ -18,7 +18,9 @@ namespace Mk2.Viewer.Rendering
         public bool IsFragment;
         public string ComponentName;
         public int Triangles;
-        public bool Transparent => Material.Blend != BlendMode.Opaque || (TextureHasAlpha && !Material.AlphaTest && !TextureIsCutout);
+        public bool Transparent => Material.Blend != BlendMode.Opaque || VertexAlpha || (TextureHasAlpha && !Material.AlphaTest && !TextureIsCutout);
+        /// <summary>Some vertices fade out (overlay edges blending into the ground below).</summary>
+        public bool VertexAlpha;
         public bool TextureIsCutout;
         public SkinSource Skin;
     }
@@ -89,6 +91,7 @@ namespace Mk2.Viewer.Rendering
                     Texture = tex.Id,
                     TextureHasAlpha = tex.HasAlpha,
                     TextureIsCutout = tex.Cutout,
+                    VertexAlpha = verts.Any(vertex => vertex.Color.W < 0.95f),
                     IsCollisionComponent = comp.IsCollision,
                     IsFragment = comp.IsFragment,
                     ComponentName = comp.Name,
