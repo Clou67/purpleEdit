@@ -17,6 +17,7 @@ namespace Mk2.Viewer.Rendering {
         public ItemKind Kind;
         public string Name;
         public Vector3 WorldMin, WorldMax;
+        public Vector4 Tint = Vector4.One;
     }
 
     public sealed class CollisionItem {
@@ -103,7 +104,7 @@ namespace Mk2.Viewer.Rendering {
                 foreach (var o in ch.Objects) {
                     if (ch.ObjectModels.TryGetValue(o, out var lm)) {
                         var w = o.ModelMatrix;
-                        AddItem(new DrawItem { Model = Gpu(lm), World = w, Chunk = ch, Kind = ItemKind.Object, Object = o, Name = lm.Name });
+                        AddItem(new DrawItem { Model = Gpu(lm), World = w, Chunk = ch, Kind = ItemKind.Object, Object = o, Name = lm.Name, Tint = ObjectTint(o) });
                         foreach (var c in lm.Collisions)
                             AddCollision(c, w, ch, o);
                     }
@@ -120,6 +121,17 @@ namespace Mk2.Viewer.Rendering {
                 min = new Vector3(-1000); max = new Vector3(1000);
             }
             SceneMin = min; SceneMax = max;
+        }
+
+        /// <summary>The layout's "color r g b" tint. Values above 2 are taken as PS2 style, where 128 is 1.0.</summary>
+        private static Vector4 ObjectTint(LevelObject levelObject) {
+            if (!levelObject.Color.HasValue) return Vector4.One;
+            var color = levelObject.Color.Value;
+            float largest = MathF.Max(color.X, MathF.Max(color.Y, color.Z));
+            if (largest <= 0) return Vector4.One;
+            if (largest > 2) color /= 128f;
+            color = Vector3.Clamp(color, Vector3.Zero, new Vector3(2));
+            return new Vector4(color, 1);
         }
 
         private GpuModel Gpu(LoadedModel lm) {
@@ -425,6 +437,7 @@ namespace Mk2.Viewer.Rendering {
             _mesh.Set("uFog", s.Fog);
             _mesh.Set("uFogColor", fogColor);
             _mesh.Set("uFogRange", fogRange);
+            _mesh.Set("uFogMax", 0.7f);
             _mesh.Set("uEye", s.MirrorX ? cam.Position * new Vector3(-1, 1, 1) : cam.Position);
             _mesh.Set("uBrightness", s.Brightness);
             GL.ActiveTexture(TextureUnit.Texture0);
@@ -439,8 +452,11 @@ namespace Mk2.Viewer.Rendering {
                     if (it.Kind != ItemKind.EnvDome || !Visible(it, s)) continue;
                     var c = (it.Model.Min + it.Model.Max) * 0.5f;
                     var w = Matrix4x4.CreateTranslation(eye - new Vector3(c.X, 0, c.Z));
-                    DrawModel(it.Model, w, s, time, pass: 0, forceNoFog: true);
-                    DrawModel(it.Model, w, s, time, pass: 1, forceNoFog: true);
+                    DrawModel(it, w, s, time, pass: 0, forceNoFog: true);
+                    GL.Enable(EnableCap.Blend);
+                    DrawModel(it, w, s, time, pass: 1, forceNoFog: true);
+                    GL.Disable(EnableCap.Blend);
+                    GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
                 }
                 GL.Enable(EnableCap.DepthTest);
                 GL.DepthMask(true);
@@ -458,41 +474,33 @@ namespace Mk2.Viewer.Rendering {
             GL.Disable(EnableCap.Blend);
             int opaqueIndex = 0;
             foreach (var it in _visible) {
-                DrawModel(it.Model, it.World, s, time, pass: 0);
+                DrawModel(it, it.World, s, time, pass: 0);
                 if (DebugStageError != null) CheckGl($"Opaque pass, item {opaqueIndex} ({it.Name})");
                 opaqueIndex++;
             }
 
             // 3. Collision.
             if (s.GroundCollision || s.ObjectCollision) {
-                bool overlay = s.CollisionOverlay;
-                // Pull collision slightly towards the camera so it wins over the coincident visual mesh.
                 GL.Enable(EnableCap.PolygonOffsetFill);
                 GL.PolygonOffset(-1f, -2f);
-                if (overlay) {
-                    GL.Enable(EnableCap.Blend);
-                    GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-                    GL.DepthMask(false);
-                }
                 _mesh.Set("uUseTex", 0);
                 _mesh.Set("uUseVCol", 1);
                 _mesh.Set("uLighting", 1);
                 _mesh.Set("uAlphaRef", 0f);
                 _mesh.Set("uUVOffset", Vector2.Zero);
-                _mesh.Set("uTint", new Vector4(1, 1, 1, overlay ? 0.45f : 1f));
-                float prevBright = s.Brightness;
+                _mesh.Set("uTint", Vector4.One);
                 _mesh.Set("uBrightness", 1f);
-                foreach (var c in Collisions) {
-                    if (c.Object == null ? !s.GroundVisible(c.Chunk.Def.Name, c.Name) : (!s.ObjectCollision || !s.ObjectVisible(c.Object))) continue;
-                    if (!InFrustum(c.WorldMin, c.WorldMax)) continue;
-                    _mesh.Set("uModel", c.World);
-                    c.Mesh.Draw();
-                    LastDrawnTriangles += c.Triangles;
+                foreach (var collision in Collisions) {
+                    bool shown = collision.Object == null
+                        ? s.GroundVisible(collision.Chunk.Def.Name, collision.Name)
+                        : s.ObjectCollision && s.ObjectVisible(collision.Object);
+                    if (!shown || !InFrustum(collision.WorldMin, collision.WorldMax)) continue;
+                    _mesh.Set("uModel", collision.World);
+                    collision.Mesh.Draw();
+                    LastDrawnTriangles += collision.Triangles;
                 }
-                _mesh.Set("uBrightness", prevBright);
+                _mesh.Set("uBrightness", s.Brightness);
                 GL.Disable(EnableCap.PolygonOffsetFill);
-                GL.DepthMask(true);
-                GL.Disable(EnableCap.Blend);
             }
             CheckGl("Collision pass");
 
@@ -500,7 +508,7 @@ namespace Mk2.Viewer.Rendering {
             if (s.Transparency) {
                 GL.Enable(EnableCap.Blend);
                 GL.DepthMask(false);
-                foreach (var it in _visible) DrawModel(it.Model, it.World, s, time, pass: 1);
+                foreach (var it in _visible) DrawModel(it, it.World, s, time, pass: 1);
                 GL.DepthMask(true);
                 GL.Disable(EnableCap.Blend);
             }
@@ -518,14 +526,10 @@ namespace Mk2.Viewer.Rendering {
             _lines.Set("uModel", Matrix4x4.Identity);
             _lines.Set("uTint", Vector4.One);
             if (Scene == null || Items.Count == 0) _gridLines?.Draw();
-            if (s.Objects) {
-                if (s.Shapes)
-                    foreach (var kv in _shapeLines)
-                        if (s.CategoryBatchVisible(kv.Key.chunk, kv.Key.cat)) kv.Value.Draw();
-                if (s.Markers)
-                    foreach (var kv in _markerLines)
-                        if (s.CategoryBatchVisible(kv.Key.chunk, kv.Key.cat)) kv.Value.Draw();
-            }
+            foreach (var entry in _shapeLines)
+                if (s.CategoryBatchVisible(entry.Key.chunk, entry.Key.cat)) entry.Value.Draw();
+            foreach (var entry in _markerLines)
+                if (s.CategoryBatchVisible(entry.Key.chunk, entry.Key.cat)) entry.Value.Draw();
             if (_selectionFill != null) {
                 float pulse = 0.5f + 0.5f * MathF.Sin((float)(DateTime.Now - _start).TotalSeconds * 4f);
                 _mesh.Use();
@@ -613,7 +617,9 @@ namespace Mk2.Viewer.Rendering {
             if (s.CullBackfaces) GL.Enable(EnableCap.CullFace);
         }
 
-        private void DrawModel(GpuModel m, Matrix4x4 world, ViewSettings s, float time, int pass, bool forceNoFog = false) {
+        private void DrawModel(DrawItem item, Matrix4x4 world, ViewSettings s, float time, int pass, bool forceNoFog = false) {
+            var m = item.Model;
+            bool prelit = item.Kind != ItemKind.Object && s.VertexColors;
             bool modelSet = false;
             foreach (var p in m.Parts) {
                 if (p.IsCollisionComponent && !s.ModelCollisionComponents) continue;
@@ -628,13 +634,13 @@ namespace Mk2.Viewer.Rendering {
                 bool useTex = s.Textures && p.Texture != 0;
                 _mesh.Set("uUseTex", useTex);
                 _mesh.Set("uUseVCol", s.VertexColors);
-                _mesh.Set("uLighting", s.Lighting || p.IsCollisionComponent);
+                _mesh.Set("uLighting", (s.Lighting && !prelit) || p.IsCollisionComponent);
                 float aref = 0f;
                 if (useTex && (mat.AlphaTest || p.TextureIsCutout || (p.TextureHasAlpha && !transparent)))
                     aref = mat.AlphaRef > 0 ? mat.AlphaRef : 0.5f;
                 if (pass == 1) aref = 0.01f;
                 _mesh.Set("uAlphaRef", aref);
-                var tint = p.IsCollisionComponent ? new Vector4(0.4f, 1f, 0.4f, 1f) : Vector4.One;
+                var tint = p.IsCollisionComponent ? new Vector4(0.4f, 1f, 0.4f, 1f) : item.Tint;
                 _mesh.Set("uTint", tint);
                 var off = mat.Scrolls ? new Vector2(Frac(mat.ScrollU * time), Frac(mat.ScrollV * time)) : Vector2.Zero;
                 _mesh.Set("uUVOffset", off);
@@ -707,14 +713,13 @@ namespace Mk2.Viewer.Rendering {
                 }
             }
 
-            if (Scene != null && s.Objects) {
+            if (Scene != null) {
                 foreach (var ch in Scene.Chunks) {
                     if (s.HiddenChunks.Contains(ch.Def.Name)) continue;
                     foreach (var o in ch.Objects) {
                         if (!s.ObjectVisible(o)) continue;
-                        if (!ch.ObjectModels.ContainsKey(o) && s.Markers && RaySphere(origin, dir, o.Position, 70, out float t0))
+                        if (!ch.ObjectModels.ContainsKey(o) && RaySphere(origin, dir, o.Position, 70, out float t0))
                             Consider(t0, null, o, o.DisplayName);
-                        if (!s.Shapes) continue;
                         foreach (var sh in o.Shapes) {
                             switch (sh.Kind) {
                                 case ShapeKind.Sphere:

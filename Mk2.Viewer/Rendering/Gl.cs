@@ -254,6 +254,7 @@ uniform vec3 uLightDir;
 uniform int uFog;
 uniform vec3 uFogColor;
 uniform vec2 uFogRange;
+uniform float uFogMax;
 uniform vec3 uEye;
 out vec4 frag;
 void main() {
@@ -264,13 +265,13 @@ void main() {
     if (uLighting == 1) {
         vec3 n = normalize(vNrm);
         if (!gl_FrontFacing) n = -n;
-        float d = dot(n, normalize(uLightDir));
-        c.rgb *= 0.45 + 0.55 * max(d, 0.0) + 0.15 * max(-d, 0.0);
+        float facing = dot(n, normalize(uLightDir)) * 0.5 + 0.5;
+        c.rgb *= mix(0.6, 1.1, facing);
     }
     if (uFog == 1) {
         float dist = length(vWorld - uEye);
-        float f = clamp((dist - uFogRange.x) / max(uFogRange.y - uFogRange.x, 1.0), 0.0, 1.0);
-        c.rgb = mix(c.rgb, uFogColor, f);
+        float amount = clamp((dist - uFogRange.x) / max(uFogRange.y - uFogRange.x, 1.0), 0.0, 1.0);
+        c.rgb = mix(c.rgb, uFogColor, amount * uFogMax);
     }
     frag = c;
 }";

@@ -8,54 +8,65 @@ namespace Mk2.Viewer.Rendering
         public bool Overlays = true;
         public bool Objects = true;
         public bool EnvDome = true;
+        public bool GroundCollision = false;
+        public bool ObjectCollision = false;
+
         public bool Textures = true;
         public bool VertexColors = true;
         public bool Lighting = false;
+        public bool Transparency = true;
+        public bool Fog = true;
+        public float Brightness = 1.6f;
+
         public bool Wireframe = false;
         public bool CullBackfaces = false;
-        public bool Fog = false;
-        public bool Transparency = true;
-        public bool GroundCollision = false;
-        public bool ObjectCollision = false;
-        public bool CollisionOverlay = false;     // draw collision semi-transparent on top of geometry (off = solid)
-        public bool ModelCollisionComponents = false; // c_* components inside models
-        public bool Fragments = false;               // f_* shatter pieces
-        public bool Markers = true;                  // crosses for objects without a model
-        public bool Shapes = true;                   // boxes / spheres / paths of logic objects
-        public bool MirrorX = true;                  // game is left-handed: mirror X so levels match in-game
-        public float Brightness = 1.6f;
-        public bool Skeleton = true;                 // bone lines for the model in the Animations / Skeletons tabs
-        public bool AnimatedMesh = true;             // the posed mesh itself (off = skeleton only)
+        public bool ModelCollisionComponents = false;
+        public bool Fragments = false;
+        public bool MirrorX = true;
 
-        public readonly HashSet<ObjectCategory> HiddenCategories = new HashSet<ObjectCategory>();
+        public bool Skeleton = false;
+        public bool AnimatedMesh = true;
+
+        public static readonly ObjectCategory[] VolumeCategories =
+        {
+            ObjectCategory.Trigger, ObjectCategory.Spawn, ObjectCategory.Checkpoint, ObjectCategory.Path, ObjectCategory.Volume,
+            ObjectCategory.Camera, ObjectCategory.Sound, ObjectCategory.Logic, ObjectCategory.Critter,
+        };
+
+        public readonly HashSet<ObjectCategory> ShownVolumes = new HashSet<ObjectCategory>();
         public readonly HashSet<string> HiddenChunks = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
-
-        public bool CategoryVisible(ObjectCategory c) => !HiddenCategories.Contains(c);
-
         public readonly HashSet<(string chunk, string group)> HiddenGroups = new HashSet<(string, string)>();
-        public readonly HashSet<(string chunk, ObjectCategory cat)> HiddenChunkCategories = new HashSet<(string, ObjectCategory)>();
+        public readonly HashSet<(string chunk, ObjectCategory category)> HiddenChunkCategories = new HashSet<(string, ObjectCategory)>();
         public readonly HashSet<(string chunk, string name)> HiddenItems = new HashSet<(string, string)>();
         public readonly HashSet<LevelObject> HiddenObjects = new HashSet<LevelObject>();
+
+        public bool CategoryVisible(ObjectCategory category) =>
+            category == ObjectCategory.Prop ? Objects : ShownVolumes.Contains(category);
 
         public bool GroupHidden(string chunk, string group) => HiddenGroups.Contains((chunk, group));
 
         public bool OverlayVisible(string chunk, string name) =>
-            Overlays && !HiddenChunks.Contains(chunk) && !HiddenGroups.Contains((chunk, "overlays")) && !HiddenItems.Contains((chunk, name));
+            Overlays && !HiddenChunks.Contains(chunk) && !GroupHidden(chunk, "overlays") && !HiddenItems.Contains((chunk, name));
 
-        public bool DomeVisible(string chunk) => EnvDome && !HiddenChunks.Contains(chunk) && !HiddenGroups.Contains((chunk, "dome"));
+        public bool DomeVisible(string chunk) => EnvDome && !HiddenChunks.Contains(chunk) && !GroupHidden(chunk, "dome");
 
         public bool GroundVisible(string chunk, string name) =>
-            GroundCollision && !HiddenChunks.Contains(chunk) && !HiddenGroups.Contains((chunk, "grounds")) && !HiddenItems.Contains((chunk, name));
+            GroundCollision && !HiddenChunks.Contains(chunk) && !GroupHidden(chunk, "grounds") && !HiddenItems.Contains((chunk, name));
 
-        public bool CategoryBatchVisible(string chunk, ObjectCategory c) =>
-            Objects && !HiddenChunks.Contains(chunk) && !HiddenGroups.Contains((chunk, "objects"))
-            && CategoryVisible(c) && !HiddenChunkCategories.Contains((chunk, c));
+        public bool CategoryBatchVisible(string chunk, ObjectCategory category) =>
+            CategoryVisible(category) && !HiddenChunks.Contains(chunk) && !GroupHidden(chunk, "objects")
+            && !HiddenChunkCategories.Contains((chunk, category));
 
-        public bool ObjectVisible(LevelObject o) => CategoryBatchVisible(o.ChunkName, o.Category) && !HiddenObjects.Contains(o);
+        public bool ObjectVisible(LevelObject levelObject) =>
+            CategoryBatchVisible(levelObject.ChunkName, levelObject.Category) && !HiddenObjects.Contains(levelObject);
 
         public void ClearSceneVisibility()
         {
-            HiddenChunks.Clear(); HiddenGroups.Clear(); HiddenChunkCategories.Clear(); HiddenItems.Clear(); HiddenObjects.Clear();
+            HiddenChunks.Clear();
+            HiddenGroups.Clear();
+            HiddenChunkCategories.Clear();
+            HiddenItems.Clear();
+            HiddenObjects.Clear();
         }
     }
 }
