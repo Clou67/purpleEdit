@@ -41,7 +41,7 @@ The game folder can be any folder that contains the extracted files and/or the a
 * **Overlays** you can turn on or off: textures, prelit vertex colours (brightness ×1–2), lighting, wireframe, fog from levels.ini, ground and prop collision (coloured per collision material), `c_*` collision components and `f_*` fragments inside models, and trigger boxes/spheres/polygons, paths, volumes, cameras, spawns, sounds and logic objects.
 * **Export**: the current scene (visible chunks) to `.glb` with embedded textures and object transforms, the selected model to `.glb`, all scene textures to PNG, decompiled layouts to text, and screenshots.
 
-Press **F11** for a fullscreen viewport (F11 or Esc to return). In the Scene tab every chunk's overlays, objects, categories, ground collision and individual items can be ticked on or off independently.
+Press **F11** for a fullscreen viewport (F11 or Esc to return). Click the thin arrow strips on either edge of the viewport (or press Ctrl+1 / Ctrl+2) to collapse or expand the left and right panels; Ctrl+3 hides both. The layout is remembered between runs. In the Scene tab every chunk's overlays, objects, categories, ground collision and individual items can be ticked on or off independently.
 
 Controls: right-drag to look, WASD to move, Q/E for down/up, Shift/Ctrl for faster/slower, the mouse wheel sets fly speed, middle-drag pans, left-click selects, F focuses the selection, and Esc deselects.
 

@@ -56,6 +56,9 @@ namespace Mk2.Viewer
         private StatusStrip _statusStrip;
         private SplitContainer _mainSplit, _rightSplit;
         private bool _fullscreen;
+        private bool _leftCollapsed, _rightCollapsed;
+        private EdgeToggle _leftEdge, _rightEdge;
+        private ToolStripMenuItem _leftPanelItem, _rightPanelItem;
         private FormWindowState _prevState;
         private FormBorderStyle _prevBorder;
         private ToolStripStatusLabel _status, _camStatus;
@@ -146,6 +149,16 @@ namespace Mk2.Viewer
             view.DropDownItems.Add("Frame whole scene", null, (s, e) => { FrameWorld(_renderer.SceneMin, _renderer.SceneMax); Redraw(); });
             view.DropDownItems.Add("Focus selection (F)", null, (s, e) => FocusSelection());
             view.DropDownItems.Add(new ToolStripMenuItem("Fullscreen viewport", null, (s, e) => ToggleFullscreen()) { ShortcutKeys = Keys.F11 });
+            _leftPanelItem = new ToolStripMenuItem("Left panel", null, (s, e) => SetPanels(!_leftCollapsed, _rightCollapsed)) { ShortcutKeys = Keys.Control | Keys.D1 };
+            _rightPanelItem = new ToolStripMenuItem("Right panel", null, (s, e) => SetPanels(_leftCollapsed, !_rightCollapsed)) { ShortcutKeys = Keys.Control | Keys.D2 };
+            view.DropDownItems.Add(_leftPanelItem);
+            view.DropDownItems.Add(_rightPanelItem);
+            view.DropDownItems.Add(new ToolStripMenuItem("Viewport only (hide both panels)", null, (s, e) =>
+            {
+                bool both = _leftCollapsed && _rightCollapsed;
+                SetPanels(!both, !both);
+            }) { ShortcutKeys = Keys.Control | Keys.D3 });
+            view.DropDownOpening += (s, e) => { _leftPanelItem.Checked = !_leftCollapsed; _rightPanelItem.Checked = !_rightCollapsed; };
             view.DropDownItems.Add("Background colour…", null, (s, e) => PickBackground());
             view.DropDownItems.Add(new ToolStripSeparator());
             view.DropDownItems.Add(Toggle("Dark mode (UI)", () => Theme.Dark, v => { Theme.Apply(this, v); SaveSetting("dark", v ? "1" : "0"); }));
@@ -290,7 +303,17 @@ namespace Mk2.Viewer
             _gl.LostFocus += (s, e) => _keys.Clear();
 
             var right = _rightSplit = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, FixedPanel = FixedPanel.Panel2 };
+            // Thin clickable strips on each edge of the viewport collapse / expand the side panels.
+            _leftEdge = new EdgeToggle { Dock = DockStyle.Left, Width = 14 };
+            _leftEdge.Click += (s, e) => SetPanels(!_leftCollapsed, _rightCollapsed);
+            _rightEdge = new EdgeToggle { Dock = DockStyle.Right, Width = 14 };
+            _rightEdge.Click += (s, e) => SetPanels(_leftCollapsed, !_rightCollapsed);
+            var edgeTips = new ToolTip();
+            edgeTips.SetToolTip(_leftEdge, "Show / hide the left panel (Ctrl+1)");
+            edgeTips.SetToolTip(_rightEdge, "Show / hide the right panel (Ctrl+2)");
             right.Panel1.Controls.Add(_gl);
+            right.Panel1.Controls.Add(_leftEdge);
+            right.Panel1.Controls.Add(_rightEdge);
             right.Panel2.Controls.Add(_rightTabs);
 
             var main = _mainSplit = new SplitContainer { Dock = DockStyle.Fill, FixedPanel = FixedPanel.Panel1 };
@@ -307,6 +330,7 @@ namespace Mk2.Viewer
             {
                 main.SplitterDistance = 330;
                 right.SplitterDistance = Math.Max(200, right.Width - 420);
+                SetPanels(LoadSetting("leftPanel") == "0", LoadSetting("rightPanel") == "0");
             };
         }
 
@@ -1097,6 +1121,7 @@ namespace Mk2.Viewer
                 _menu.Visible = _tools.Visible = _statusStrip.Visible = false;
                 _mainSplit.Panel1Collapsed = true;
                 _rightSplit.Panel2Collapsed = true;
+                _leftEdge.Visible = _rightEdge.Visible = false;
                 FormBorderStyle = FormBorderStyle.None;
                 if (WindowState == FormWindowState.Maximized) WindowState = FormWindowState.Normal;   // re-maximise to cover the taskbar
                 WindowState = FormWindowState.Maximized;
@@ -1104,8 +1129,9 @@ namespace Mk2.Viewer
             else
             {
                 _menu.Visible = _tools.Visible = _statusStrip.Visible = true;
-                _mainSplit.Panel1Collapsed = false;
-                _rightSplit.Panel2Collapsed = false;
+                _mainSplit.Panel1Collapsed = _leftCollapsed;
+                _rightSplit.Panel2Collapsed = _rightCollapsed;
+                _leftEdge.Visible = _rightEdge.Visible = true;
                 FormBorderStyle = _prevBorder;
                 WindowState = FormWindowState.Normal;
                 WindowState = _prevState;
@@ -1113,6 +1139,55 @@ namespace Mk2.Viewer
             ResumeLayout(true);
             _gl.Focus();
             Redraw();
+        }
+
+        /// <summary>Collapse / expand the left (tree) and right (properties) panels; remembered between runs.</summary>
+        private void SetPanels(bool leftCollapsed, bool rightCollapsed)
+        {
+            _leftCollapsed = leftCollapsed;
+            _rightCollapsed = rightCollapsed;
+            if (!_fullscreen)
+            {
+                _mainSplit.Panel1Collapsed = leftCollapsed;
+                _rightSplit.Panel2Collapsed = rightCollapsed;
+            }
+            // Arrow points the way the panel will move when clicked.
+            _leftEdge.PointLeft = !leftCollapsed;
+            _rightEdge.PointLeft = rightCollapsed;
+            _leftEdge.Invalidate();
+            _rightEdge.Invalidate();
+            SaveSetting("leftPanel", leftCollapsed ? "0" : "1");
+            SaveSetting("rightPanel", rightCollapsed ? "0" : "1");
+            Redraw();
+        }
+
+        /// <summary>Narrow strip with a chevron at the viewport edge; click to collapse / expand a side panel.</summary>
+        private sealed class EdgeToggle : Control
+        {
+            public bool PointLeft;
+            private bool _hover;
+
+            public EdgeToggle()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                Cursor = Cursors.Hand;
+            }
+
+            protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+            protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                using (var b = new SolidBrush(_hover ? Theme.Hover : Theme.Back)) g.FillRectangle(b, ClientRectangle);
+                using (var p = new Pen(Theme.Border)) g.DrawRectangle(p, 0, 0, Width - 1, Height - 1);
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                float cx = Width / 2f, cy = Height / 2f, s = 4f;
+                var pts = PointLeft
+                    ? new[] { new PointF(cx + s / 2, cy - s), new PointF(cx - s / 2, cy), new PointF(cx + s / 2, cy + s) }
+                    : new[] { new PointF(cx - s / 2, cy - s), new PointF(cx + s / 2, cy), new PointF(cx - s / 2, cy + s) };
+                using (var p = new Pen(_hover ? Theme.Fore : Theme.Dim, 2f)) g.DrawLines(p, pts);
+            }
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
