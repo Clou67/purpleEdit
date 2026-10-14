@@ -35,15 +35,15 @@ namespace Mk2.Viewer.Rendering
         {
             ClearAnimation();
             if (anim == null) return;
-            if (item != null && !item.Model.Animatable)
+            if (item != null)
             {
-                var lm = item.Model.Source;
-                var old = item.Model;
-                var g = GpuModel.Build(lm, _textures, animatable: true);
-                foreach (var it in Items) if (it.Model == old) it.Model = g;
-                _models[lm] = g;
-                _pickTris.Remove(old);
-                old.Dispose();
+                var loadedModel = item.Model.Source;
+                var previous = item.Model;
+                var rebuilt = GpuModel.Build(loadedModel, _textures, anim);
+                foreach (var drawItem in Items) if (drawItem.Model == previous) drawItem.Model = rebuilt;
+                _models[loadedModel] = rebuilt;
+                _pickTris.Remove(previous);
+                previous.Dispose();
             }
             Anim = new AnimationState
             {

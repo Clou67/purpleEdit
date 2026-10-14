@@ -9,8 +9,10 @@ namespace Mk2.Formats
         public Vector3 Normal;
         public Vector2 UV;
         public Vector4 Color = Vector4.One;   // 0..1, PS2 colours are scaled so 0x80 = 1.0
-        /// <summary>Skeleton bone indices (already remapped through the mesh's anim node list).</summary>
+        /// <summary>Skeleton bone indices (already remapped through the mesh's anim node list). 0xFF = no valid bone.</summary>
         public byte Bone0, Bone1;
+        /// <summary>The node indices as stored in the file, before remapping.</summary>
+        public byte Node0, Node1;
         public float Weight0 = 1f;
     }
 
@@ -19,6 +21,7 @@ namespace Mk2.Formats
     {
         public List<ModelVertex> Vertices = new();
         public uint HeaderFlags;     // 4th word of the per-strip header qword (usually 0xFFFFFFFF)
+        public bool Skinned;
     }
 
     public sealed class ModelMesh
@@ -207,6 +210,19 @@ namespace Mk2.Formats
         /// Skinned vertices store a node index into the mesh's anim node list. Each list is 0x80 bytes:
         /// u8 count, then count bone indices. Converts Bone0/Bone1 into skeleton bone indices.
         /// </summary>
+        public const byte NoBone = 0xFF;
+
+        /// <summary>The bones listed in a mesh's anim node list, or an empty list.</summary>
+        public IReadOnlyList<int> NodeListBones(ModelMesh mesh)
+        {
+            if (mesh.AnimNodeList == 0xFFFF || mesh.AnimNodeList >= AnimNodeLists.Count) return Array.Empty<int>();
+            var list = AnimNodeLists[mesh.AnimNodeList];
+            int listLength = list.Length > 0 ? Math.Min(list[0], list.Length - 1) : 0;
+            var bones = new int[listLength];
+            for (int index = 0; index < listLength; index++) bones[index] = list[index + 1];
+            return bones;
+        }
+
         private static void RemapBones(Model m, ModelMesh mesh)
         {
             if (!mesh.Skinned || mesh.AnimNodeList == 0xFFFF) return;
@@ -216,14 +232,17 @@ namespace Mk2.Formats
                 return;
             }
             var list = m.AnimNodeLists[mesh.AnimNodeList];
-            int n = list.Length > 0 ? Math.Min(list[0], list.Length - 1) : 0;
-            byte Map(byte node) => node < n ? list[node + 1] : (byte)0;
-            foreach (var s in mesh.Strips)
-                foreach (var v in s.Vertices)
+            int listLength = list.Length > 0 ? Math.Min(list[0], list.Length - 1) : 0;
+            byte Map(byte node) => node < listLength ? list[node + 1] : NoBone;
+            foreach (var strip in mesh.Strips)
+            {
+                if (!strip.Skinned) continue;
+                foreach (var vertex in strip.Vertices)
                 {
-                    v.Bone0 = Map(v.Bone0);
-                    v.Bone1 = Map(v.Bone1);
+                    vertex.Bone0 = Map(vertex.Node0);
+                    vertex.Bone1 = Map(vertex.Node1);
                 }
+            }
         }
 
         private static int ReadMesh(Bin g, int off, ModelMesh mesh)
@@ -316,7 +335,8 @@ namespace Mk2.Formats
                     {
                         int o = nrm.at + i * 4;
                         v.Normal = new Vector3(g.S8(o), g.S8(o + 1), g.S8(o + 2)) / 127f;
-                        v.Bone0 = (byte)(g.U8(o + 3) >> 1);
+                        v.Node0 = v.Bone0 = (byte)(g.U8(o + 3) >> 1);
+                        s.Skinned = true;
                         mesh.Skinned = true;
                     }
                 }
@@ -336,7 +356,7 @@ namespace Mk2.Formats
                         int o = uv.at + i * 8;
                         v.UV = new Vector2(g.S16(o), g.S16(o + 2)) / 4096f;
                         v.Weight0 = Math.Clamp(g.S16(o + 4) / 4096f, 0f, 1f);
-                        v.Bone1 = (byte)(g.U16(o + 6) >> 2);
+                        v.Node1 = v.Bone1 = (byte)(g.U16(o + 6) >> 2);
                     }
                 }
             }

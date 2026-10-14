@@ -23,14 +23,15 @@ namespace Mk2.Viewer.Rendering
         public SkinSource Skin;
     }
 
-    /// <summary>Per-vertex bind pose + bone data for one part, and the interleaved buffer it is skinned into.</summary>
+    /// <summary>Per-vertex bind pose and bone data for one part, and the interleaved buffer it is skinned into.</summary>
     public sealed class SkinSource
     {
         public Vector3[] Positions, Normals;
-        public short[] Bone0, Bone1;   // -1 = vertex isn't skinned (follows RigidBone, or stays put)
+        public bool[] Skinned;
+        public byte[] Bone0, Bone1;
         public float[] Weight0;
-        public int RigidBone = -1;     // component's rigid bone
-        public float[] Data;           // interleaved buffer (positions/normals rewritten every pose)
+        public int[] FallbackBone;
+        public float[] Data;
     }
 
     /// <summary>GPU copy of a model: one part per (component, material).</summary>
@@ -41,11 +42,12 @@ namespace Mk2.Viewer.Rendering
         public Vector3 Min, Max;           // local bounds of visible geometry
         public bool HasBounds;
 
-        /// <summary>True when built with skin data (see <see cref="ApplySkin"/>).</summary>
         public bool Animatable;
 
-        public static GpuModel Build(LoadedModel lm, TextureCache textures, bool animatable = false)
+        /// <summary>Uploads a model. Passing an animation keeps the skin data needed by <see cref="ApplySkin"/>.</summary>
+        public static GpuModel Build(LoadedModel lm, TextureCache textures, Animation animation = null)
         {
+            bool animatable = animation != null;
             var g = new GpuModel { Source = lm, Animatable = animatable };
             var model = lm.Model;
             var min = new Vector3(float.MaxValue);
@@ -77,28 +79,7 @@ namespace Mk2.Viewer.Rendering
                     }
                 }
                 SkinSource skin = null;
-                if (animatable)
-                {
-                    var skinned = new HashSet<ModelVertex>();
-                    foreach (var mesh in grp)
-                        if (mesh.Skinned) foreach (var st in mesh.Strips) foreach (var v in st.Vertices) skinned.Add(v);
-                    skin = new SkinSource
-                    {
-                        Positions = new Vector3[verts.Count], Normals = new Vector3[verts.Count],
-                        Bone0 = new short[verts.Count], Bone1 = new short[verts.Count], Weight0 = new float[verts.Count],
-                        RigidBone = comp.RigidBone, Data = data,
-                    };
-                    for (int i = 0; i < verts.Count; i++)
-                    {
-                        var v = verts[i];
-                        skin.Positions[i] = v.Position;
-                        skin.Normals[i] = new Vector3(data[i * GpuMesh.Stride + 3], data[i * GpuMesh.Stride + 4], data[i * GpuMesh.Stride + 5]);
-                        bool sk = skinned.Contains(v);
-                        skin.Bone0[i] = sk ? v.Bone0 : (short)-1;
-                        skin.Bone1[i] = sk ? v.Bone1 : (short)-1;
-                        skin.Weight0[i] = v.Weight0;
-                    }
-                }
+                if (animatable) skin = BuildSkin(model, comp, grp, data, animation);
                 var tex = textures.Get(mat.TextureName);
                 var part = new GpuPart
                 {
@@ -120,71 +101,80 @@ namespace Mk2.Viewer.Rendering
             return g;
         }
 
-        public void ApplySkin(Matrix4x4[] skin)
+        private static SkinSource BuildSkin(Model model, ModelComponent component, IEnumerable<ModelMesh> meshes, float[] data, Animation animation)
         {
-            if (!Animatable || skin == null) return;
+            int componentBone = Skinning.ComponentBone(model, component, animation);
+            var positions = new List<Vector3>();
+            var skinned = new List<bool>();
+            var bone0 = new List<byte>();
+            var bone1 = new List<byte>();
+            var weight0 = new List<float>();
+            var fallbackBone = new List<int>();
+            foreach (var mesh in meshes)
+            {
+                var listedBones = model.NodeListBones(mesh);
+                int meshFallback = componentBone >= 0 ? componentBone : listedBones.Count > 0 ? listedBones[0] : -1;
+                foreach (var strip in mesh.Strips)
+                    foreach (var vertex in strip.Vertices)
+                    {
+                        positions.Add(vertex.Position);
+                        skinned.Add(strip.Skinned);
+                        bone0.Add(vertex.Bone0);
+                        bone1.Add(vertex.Bone1);
+                        weight0.Add(vertex.Weight0);
+                        fallbackBone.Add(meshFallback);
+                    }
+            }
+            var normals = new Vector3[positions.Count];
+            for (int index = 0; index < normals.Length; index++)
+            {
+                int offset = index * GpuMesh.Stride;
+                normals[index] = new Vector3(data[offset + 3], data[offset + 4], data[offset + 5]);
+            }
+            return new SkinSource
+            {
+                Positions = positions.ToArray(),
+                Normals = normals,
+                Skinned = skinned.ToArray(),
+                Bone0 = bone0.ToArray(),
+                Bone1 = bone1.ToArray(),
+                Weight0 = weight0.ToArray(),
+                FallbackBone = fallbackBone.ToArray(),
+                Data = data,
+            };
+        }
+
+        public void ApplySkin(Matrix4x4[] skinMatrices)
+        {
+            if (!Animatable || skinMatrices == null) return;
             var min = new Vector3(float.MaxValue);
             var max = new Vector3(float.MinValue);
-            int nb = skin.Length;
-
-            var bindMin = new Vector3(float.MaxValue);
-            var bindMax = new Vector3(float.MinValue);
-            foreach (var p in Parts)
+            foreach (var part in Parts)
             {
-                if (p.Skin == null || p.IsCollisionComponent) continue;
-                foreach (var bp in p.Skin.Positions) { bindMin = Vector3.Min(bindMin, bp); bindMax = Vector3.Max(bindMax, bp); }
-            }
-            float bindRadius = bindMin.X <= bindMax.X ? Math.Max((bindMax - bindMin).Length(), 1f) : 1000f;
-            float maxStray = bindRadius * 6f + 200f;
-            var bindCenter = bindMin.X <= bindMax.X ? (bindMin + bindMax) * 0.5f : Vector3.Zero;
-
-            foreach (var p in Parts)
-            {
-                var s = p.Skin;
-                if (s == null) continue;
-                var d = s.Data;
-                bool rigid = s.RigidBone >= 0 && s.RigidBone < nb;
-                for (int i = 0; i < s.Positions.Length; i++)
+                var skin = part.Skin;
+                if (skin == null) continue;
+                var data = skin.Data;
+                for (int index = 0; index < skin.Positions.Length; index++)
                 {
-                    Vector3 pos, nrm;
-                    int b0 = s.Bone0[i];
-                    if (b0 >= 0 && b0 < nb)
+                    Skinning.PoseVertex(skin.Positions[index], skin.Normals[index], skin.Skinned[index], skin.Bone0[index], skin.Bone1[index],
+                                        skin.Weight0[index], skin.FallbackBone[index], skinMatrices, out var position, out var normal);
+                    if (!float.IsFinite(position.X) || !float.IsFinite(position.Y) || !float.IsFinite(position.Z))
                     {
-                        int b1 = s.Bone1[i];
-                        if (b1 < 0 || b1 >= nb) b1 = b0;
-                        float w = s.Weight0[i];
-                        ref var m0 = ref skin[b0];
-                        ref var m1 = ref skin[b1];
-                        pos = Vector3.Transform(s.Positions[i], m0) * w + Vector3.Transform(s.Positions[i], m1) * (1f - w);
-                        nrm = Vector3.TransformNormal(s.Normals[i], m0) * w + Vector3.TransformNormal(s.Normals[i], m1) * (1f - w);
+                        position = skin.Positions[index];
+                        normal = skin.Normals[index];
                     }
-                    else if (rigid)
+                    float length = normal.Length();
+                    normal = length > 1e-6f ? normal / length : Vector3.UnitY;
+                    int offset = index * GpuMesh.Stride;
+                    data[offset] = position.X; data[offset + 1] = position.Y; data[offset + 2] = position.Z;
+                    data[offset + 3] = normal.X; data[offset + 4] = normal.Y; data[offset + 5] = normal.Z;
+                    if (!part.IsCollisionComponent)
                     {
-                        pos = Vector3.Transform(s.Positions[i], skin[s.RigidBone]);
-                        nrm = Vector3.TransformNormal(s.Normals[i], skin[s.RigidBone]);
-                    }
-                    else
-                    {
-                        pos = s.Positions[i];
-                        nrm = s.Normals[i];
-                    }
-                    if (float.IsNaN(pos.X) || float.IsInfinity(pos.X) || (pos - bindCenter).Length() > maxStray)
-                    {
-                        pos = s.Positions[i];
-                        nrm = s.Normals[i];
-                    }
-                    float l = nrm.Length();
-                    nrm = l > 1e-6f ? nrm / l : Vector3.UnitY;
-                    int o = i * GpuMesh.Stride;
-                    d[o] = pos.X; d[o + 1] = pos.Y; d[o + 2] = pos.Z;
-                    d[o + 3] = nrm.X; d[o + 4] = nrm.Y; d[o + 5] = nrm.Z;
-                    if (!p.IsCollisionComponent)
-                    {
-                        min = Vector3.Min(min, pos);
-                        max = Vector3.Max(max, pos);
+                        min = Vector3.Min(min, position);
+                        max = Vector3.Max(max, position);
                     }
                 }
-                p.Mesh.UpdateVertices(d);
+                part.Mesh.UpdateVertices(data);
             }
             if (min.X <= max.X) { Min = min; Max = max; }
         }

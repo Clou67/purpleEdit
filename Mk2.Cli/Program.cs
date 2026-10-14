@@ -23,6 +23,7 @@ static class Program
                 case "validate": return Validate(args);
                 case "cgr": return Cgr(args);
                 case "anim": return Anim(args);
+                case "skin": return Skin(args);
                 default: Usage(); return 1;
             }
         }
@@ -45,6 +46,7 @@ static class Program
   mk2cli bni      <file.bni> [out.txt]               decompile a binary ini to text
   mk2cli cgr      <file.cgr>                         collision summary
   mk2cli anim     <gameRoot> <name> [--keys]         skeleton, clips and matched model of <name>.anm
+  mk2cli skin     <gameRoot> <model> [anim] [clip|frame]  bone bindings and vertices that move furthest in a pose
   mk2cli extract  <archive.rkv|.bpk> <outDir> [--group]
   mk2cli validate <gameRoot>                         parse every asset and report failures
 
@@ -172,6 +174,77 @@ gameRoot = any folder containing the extracted files and/or .BPK/.RKV archives."
         var arc = RkvArchive.Open(a[1]);
         arc.ExtractAll(a[2], a.Contains("--group"));
         Console.WriteLine($"Extracted {arc.Entries.Count} files");
+        return 0;
+    }
+
+    static int Skin(string[] arguments)
+    {
+        var game = Open(arguments[1]);
+        string modelName = arguments[2];
+        string animationName = arguments.Length > 3 ? arguments[3] : modelName;
+        var cache = new AssetCache(game);
+        var loadedModel = cache.GetModel(modelName, null);
+        if (loadedModel == null) { Console.WriteLine($"{modelName}.mdl not found or not readable"); return 1; }
+        var animation = cache.GetAnimation(animationName);
+        if (animation == null) { Console.WriteLine($"{animationName}.anm not found or not readable"); return 1; }
+        var model = loadedModel.Model;
+        Console.WriteLine($"{modelName}: {model.AnimNodePositions.Count} anim nodes, {model.AnimNodeLists.Count} node lists; {animationName}: {animation.Bones.Count} bones");
+        var warning = AnimationLookup.CompatibilityWarning(model, animation);
+        if (warning != null) Console.WriteLine("  warning: " + warning);
+
+        float frame = 0;
+        string poseName = "frame 0";
+        if (arguments.Length > 4)
+        {
+            var clip = cache.GetAnimSet(animationName, animation)?.Clips.FirstOrDefault(c => c.Name.Equals(arguments[4], StringComparison.OrdinalIgnoreCase));
+            if (clip != null) { frame = clip.Start; poseName = $"clip {clip.Name} (frame {clip.Start})"; }
+            else if (float.TryParse(arguments[4], out float parsed)) { frame = parsed; poseName = $"frame {parsed}"; }
+        }
+
+        string BoneName(int bone) => bone >= 0 && bone < animation.Bones.Count ? $"{bone} {animation.Bones[bone].Name}" : $"{bone} (none)";
+
+        Console.WriteLine();
+        Console.WriteLine("components:");
+        foreach (var component in model.Components)
+        {
+            int resolved = Skinning.ComponentBone(model, component, animation);
+            var lists = component.Meshes.Select(mesh => mesh.AnimNodeList == 0xFFFF ? "-" : $"{mesh.AnimNodeList}[{string.Join(",", model.NodeListBones(mesh))}]").Distinct();
+            int skinnedStrips = component.Meshes.Sum(mesh => mesh.Strips.Count(strip => strip.Skinned));
+            int strips = component.Meshes.Sum(mesh => mesh.Strips.Count);
+            Console.WriteLine($"  {component.Name,-28} extra '{component.Extra}'  rigid {component.RigidBone,5}  follows {BoneName(resolved)}  skinned strips {skinnedStrips}/{strips}  node lists {string.Join(" ", lists)}");
+        }
+
+        var globals = new Matrix4x4[animation.Bones.Count];
+        var skin = new Matrix4x4[animation.Bones.Count];
+        animation.ComputePose(frame, globals);
+        animation.SkinMatrices(globals, skin);
+
+        var moved = new List<(float distance, string description)>();
+        int unmappedVertices = 0;
+        foreach (var component in model.Components)
+        {
+            int componentBone = Skinning.ComponentBone(model, component, animation);
+            foreach (var mesh in component.Meshes)
+            {
+                var listedBones = model.NodeListBones(mesh);
+                int fallback = componentBone >= 0 ? componentBone : listedBones.Count > 0 ? listedBones[0] : -1;
+                foreach (var strip in mesh.Strips)
+                    foreach (var vertex in strip.Vertices)
+                    {
+                        if (strip.Skinned && vertex.Bone0 == Model.NoBone) unmappedVertices++;
+                        Skinning.PoseVertex(vertex.Position, vertex.Normal, strip.Skinned, vertex.Bone0, vertex.Bone1, vertex.Weight0, fallback, skin, out var posed, out _);
+                        float distance = Vector3.Distance(posed, vertex.Position);
+                        string binding = strip.Skinned
+                            ? $"nodes {vertex.Node0}/{vertex.Node1} -> bones {BoneName(vertex.Bone0 == Model.NoBone ? -1 : vertex.Bone0)} / {BoneName(vertex.Bone1 == Model.NoBone ? -1 : vertex.Bone1)} w0 {vertex.Weight0:0.###}"
+                            : $"unskinned -> {BoneName(fallback)}";
+                        moved.Add((distance, $"{component.Name} list {mesh.AnimNodeList}  bind {vertex.Position}  moved {distance:0.0}  {binding}"));
+                    }
+            }
+        }
+        Console.WriteLine();
+        Console.WriteLine($"skinned vertices whose node is outside their node list: {unmappedVertices}");
+        Console.WriteLine($"vertices that move furthest at {poseName}:");
+        foreach (var entry in moved.OrderByDescending(entry => entry.distance).Take(40)) Console.WriteLine("  " + entry.description);
         return 0;
     }
 
