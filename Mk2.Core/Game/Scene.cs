@@ -111,6 +111,44 @@ namespace Mk2.Game
             return t;
         }
 
+        private readonly Dictionary<string, Animation> _anims = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, AnimSet> _animSets = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Loads &lt;name&gt;.anm + &lt;name&gt;.ang. Returns null when there is no .anm.</summary>
+        public Animation GetAnimation(string name, IList<RkvArchive> packs = null)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            if (_anims.TryGetValue(name, out var a)) return a;
+            var anm = Game.Read(name + ".anm", packs);
+            if (anm != null)
+            {
+                try
+                {
+                    a = Animation.Load(anm, Game.Read(name + ".ang", packs), name);
+                    foreach (var w in a.Warnings) Warnings.Add($"{name}.anm: {w}");
+                }
+                catch (Exception ex) { Warnings.Add($"{name}.anm: {ex.Message}"); a = null; }
+            }
+            _anims[name] = a;
+            return a;
+        }
+
+        /// <summary>Clip list from &lt;name&gt;.bbi, or one clip covering the whole timeline when there is none.</summary>
+        public AnimSet GetAnimSet(string name, Animation anim, IList<RkvArchive> packs = null)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            if (_animSets.TryGetValue(name, out var s)) return s;
+            var d = Game.Read(name + ".bbi", packs);
+            if (d != null)
+            {
+                try { s = AnimSet.Parse(d); }
+                catch (Exception ex) { Warnings.Add($"{name}.bbi: {ex.Message}"); s = null; }
+            }
+            if ((s == null || s.Clips.Count == 0) && anim != null) s = AnimSet.WholeTimeline(anim);
+            _animSets[name] = s;
+            return s;
+        }
+
         public Collision GetCollision(string fileName, IList<RkvArchive> packs)
         {
             var d = Game.Read(fileName, packs);

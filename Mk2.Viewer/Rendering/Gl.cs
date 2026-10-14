@@ -122,14 +122,15 @@ namespace Mk2.Viewer.Rendering
         public const int Stride = 12;
         public int Vao, Vbo, Ebo, IndexCount;
 
-        public static GpuMesh Create(float[] interleaved, uint[] indices)
+        public static GpuMesh Create(float[] interleaved, uint[] indices, bool dynamic = false)
         {
             var m = new GpuMesh { IndexCount = indices.Length };
             m.Vao = GL.GenVertexArray();
             GL.BindVertexArray(m.Vao);
             m.Vbo = GL.GenBuffer();
             GL.BindBuffer(BufferTarget.ArrayBuffer, m.Vbo);
-            GL.BufferData(BufferTarget.ArrayBuffer, interleaved.Length * sizeof(float), interleaved, BufferUsageHint.StaticDraw);
+            GL.BufferData(BufferTarget.ArrayBuffer, interleaved.Length * sizeof(float), interleaved,
+                          dynamic ? BufferUsageHint.DynamicDraw : BufferUsageHint.StaticDraw);
             m.Ebo = GL.GenBuffer();
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, m.Ebo);
             GL.BufferData(BufferTarget.ElementArrayBuffer, indices.Length * sizeof(uint), indices, BufferUsageHint.StaticDraw);
@@ -153,6 +154,15 @@ namespace Mk2.Viewer.Rendering
             GL.DrawElements(PrimitiveType.Triangles, IndexCount, DrawElementsType.UnsignedInt, 0);
         }
 
+        /// <summary>Replaces the interleaved vertex data (same vertex count as at creation).</summary>
+        public void UpdateVertices(float[] interleaved)
+        {
+            if (Vbo == 0) return;
+            GL.BindBuffer(BufferTarget.ArrayBuffer, Vbo);
+            GL.BufferSubData(BufferTarget.ArrayBuffer, IntPtr.Zero, interleaved.Length * sizeof(float), interleaved);
+            GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
+        }
+
         public void Dispose()
         {
             if (Vao != 0) GL.DeleteVertexArray(Vao);
@@ -167,7 +177,7 @@ namespace Mk2.Viewer.Rendering
     {
         public int Vao, Vbo, VertexCount;
 
-        public static GpuLines Create(List<float> data)
+        public static GpuLines Create(List<float> data, bool dynamic = false)
         {
             var l = new GpuLines { VertexCount = data.Count / 7 };
             l.Vao = GL.GenVertexArray();
@@ -175,7 +185,8 @@ namespace Mk2.Viewer.Rendering
             l.Vbo = GL.GenBuffer();
             GL.BindBuffer(BufferTarget.ArrayBuffer, l.Vbo);
             var arr = data.ToArray();
-            GL.BufferData(BufferTarget.ArrayBuffer, arr.Length * sizeof(float), arr, BufferUsageHint.StaticDraw);
+            GL.BufferData(BufferTarget.ArrayBuffer, arr.Length * sizeof(float), arr,
+                          dynamic ? BufferUsageHint.DynamicDraw : BufferUsageHint.StaticDraw);
             GL.EnableVertexAttribArray(0);
             GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 7 * sizeof(float), 0);
             GL.EnableVertexAttribArray(1);
@@ -189,6 +200,17 @@ namespace Mk2.Viewer.Rendering
             if (VertexCount == 0) return;
             GL.BindVertexArray(Vao);
             GL.DrawArrays(PrimitiveType.Lines, 0, VertexCount);
+        }
+
+        /// <summary>Replaces the line data (any length).</summary>
+        public void Update(List<float> data)
+        {
+            if (Vbo == 0) return;
+            var arr = data.ToArray();
+            GL.BindBuffer(BufferTarget.ArrayBuffer, Vbo);
+            GL.BufferData(BufferTarget.ArrayBuffer, arr.Length * sizeof(float), arr, BufferUsageHint.DynamicDraw);
+            GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
+            VertexCount = arr.Length / 7;
         }
 
         public void Dispose()

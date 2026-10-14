@@ -24,6 +24,8 @@ namespace Mk2.Viewer.Rendering
         public bool Shapes = true;                   // boxes / spheres / paths of logic objects
         public bool MirrorX = true;                  // game is left-handed: mirror X so levels match in-game
         public float Brightness = 1.6f;
+        public bool Skeleton = true;                 // bone lines for the model in the Animations / Skeletons tabs
+        public bool AnimatedMesh = true;             // the posed mesh itself (off = skeleton only)
 
         public readonly HashSet<ObjectCategory> HiddenCategories = new HashSet<ObjectCategory>();
         public readonly HashSet<string> HiddenChunks = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);

@@ -105,11 +105,11 @@ MDL3 header:
 | 0x1E | u16 | strip count |
 | 0x30 | vec4 | bounds min (w = radius) |
 | 0x40 | vec4 | bounds size |
-| 0x50 | u32 | component table (0x40 each: vec4 min, vec4 size, …, +0x30 name, +0x34 extra, +0x38 u16 bone count) |
+| 0x50 | u32 | component table (0x40 each: vec4 min, vec4 size, …, +0x30 name, +0x34 extra, +0x38 u8 ? , +0x3A u16 rigid bone, 0xFFFF = none) |
 | 0x54 | u32 | material name table (u32 string offsets; names are `.min` material names) |
 | 0x58 | u32 | ref point table (u32 offsets → vec4 pos, +0x10 name offset) e.g. `r_A024_weapon01` |
 | 0x5C | u32 | anim node bind positions (vec4 each) |
-| 0x64 | u32 | anim node lists (128-byte bone remap tables) |
+| 0x64 | u32 | anim node lists (0x80 bytes each: `u8 count`, then `count` skeleton bone indices) |
 | 0x68 | u32 | mesh lookup table `[material][component]` → MDG offset of the first mesh (0 = none) |
 
 Component names: `c_*` / `C_Collide` = collision proxy (hidden), `f_*` = shatter fragment, `m_*` = main mesh.
@@ -127,7 +127,70 @@ UNPACK V2-16 @4           uv (s16 / 4096)                           — static
 UNPACK V4-8  @5           RGBA prelit colour (0x80 = 1.0)
 MSCAL
 ```
-Each batch is a plain triangle strip (no restart flags). Skinned vertices are stored in bind pose, model space. Bone indices go through the mesh's anim node list when it isn't 0xFFFF.
+Each batch is a plain triangle strip (no restart flags). Skinned vertices are stored in bind pose, model space. When the mesh's anim node list isn't 0xFFFF, a vertex's bone value is a node index into that list: **bone = list[1 + node]** (the first byte is the list's length).
+
+Components whose meshes aren't skinned follow their **rigid bone** (component +0x3A) instead. The dragon door is built this way: its leaves and the dragon heads ride bones `z_LDoor` / `z_RDoor`, and the arch rides `C_CollisionArch`.
+
+## ANM3 + ANG3 animations
+
+An animated model ships as `name.mdl/.mdg` + `name.anm/.ang` + `name.bbi`. The `.anm` holds the skeleton and every key; the `.ang` ("guts") holds the compressed transforms the keys point at. One `.anm` is one long timeline, and the `.bbi` cuts it into named clips. The anim node count in the MDL3 header equals the ANM3 bone count, and the MDL3 anim node bind positions match the bone bind positions.
+
+Cutscene animations (`CSA_*`, `CSE_*`) have no model of their own. Their bones are named after the actor they drive (`z_A002_Head` → `A002_Sparx`), with the same bone count and order as that model's skeleton.
+
+ANM3 header:
+
+| off | type | meaning |
+|---|---|---|
+| 0x00 | char[4] | `ANM3` |
+| 0x04 | u8 | bone count |
+| 0x05 | u8 | ? (1 for props, 2 for most characters) |
+| 0x06 | u16 | frame count (timeline length) |
+| 0x14 | u32 | offset of the ANG info block: `u32 ANG data offset (0x10), u16 transform count, u16 8` |
+| 0x20 | | bones, 0x20 bytes each |
+
+Bone (0x20 bytes):
+
+| off | type | meaning |
+|---|---|---|
+| 0x00 | vec3 | bind position, **model space** |
+| 0x0C | u32 | runtime pointer (garbage on disk) |
+| 0x10 | u32 | name offset |
+| 0x14 | u16 | key count |
+| 0x16 | u16 | parent bone (0xFF = root) |
+| 0x18 | u32 | key offset |
+| 0x1C | u16 | 0 |
+| 0x1E | u16 | key type (below) |
+
+Keys are sorted by frame. Usually the first key is on frame 0 and the last is on the timeline's last frame:
+
+| type | size | layout |
+|---|---|---|
+| 0 | 8 | `u16 frame, u16 position, u16 rotation, u16 scale`: three indices into the ANG |
+| 1 | 4 | `u16 frame, u16 rotation`: rotation-only, index into the ANG |
+| 2 | 8 | `u16 frame, s16 qx, qy, qz`: rotation-only, inline. Divide by 16384; `w = sqrt(1 − x² − y² − z²)` |
+
+ANG3: a 0x10-byte header (`ANG3`, then zeros), then 8-byte transforms of `s16 x, y, z, w`. Some files have a few bytes of padding after the last transform.
+* **Rotation**: quaternion `(x, y, z, w) / 16384`. Index 1 is usually identity `(0, 0, 0, 0x3FFF)`.
+* **Position / scale**: `Decompress_Vector` from the GameCube ELF. `w` packs a 5-bit exponent per axis (x = bits 10–14, y = 5–9, z = 0–4). An exponent of 0 means 0.0. Otherwise the float's bits are `sign(v) << 31 | (e + 0x70) << 23 | (v & 0x7FFF) << 8`. Index 0 is usually the zero vector, and index 2 is scale `(1, 1, 1)`.
+
+Pose (checked against Spyro's walk and run cycles, the dragon door and Sparx):
+* Local translation = `bindPosition − parent.bindPosition + key.position`. Key positions are offsets from the bind pose, so rotation-only bones keep their bind offset.
+* With row vectors: `local = Scale · R · Translate`, where **R = `CreateFromQuaternion(conjugate(q))`**. The game's matrices are the transpose of the usual right-handed ones; using `q` directly bends knees and wings the wrong way.
+* `global = local · parent.global`, and `skin = Translate(−bindPosition) · global` (the bind pose has no rotation).
+* Skinned vertex: `w0 · (v · skin[bone0]) + (1 − w0) · (v · skin[bone1])`. Rigid component: `v · skin[rigidBone]`.
+* Keys are linearly interpolated (nlerp for rotations). 30 frames per second matches the clip lengths **(?)**.
+
+## BBI clip lists
+
+| off | meaning |
+|---|---|
+| 0x00 | char[] model name (and other strings) |
+| 0x40 | u32 clip count |
+| 0x48 | clips, 0x30 bytes each |
+
+Clip: `u32 name offset, u32 length, u16 loop (1) / once (0), u16 start frame, u16 end frame, u16 0`, then four `(u32 offset, u32 count)` sub-tables. The first lists the clip's events (0x10 bytes each: `u32 name offset, u16 type, u16 frame, u32 −1, u32 frame`). Type 1 is a sound (`CavesDoorMove`, `SpyroStepLeft`); type 0 names an attach point (`LeftHand`). The event frames are absolute timeline frames. The other three sub-tables have always been empty so far.
+
+Example (`P1977_DragonDoor`): `idle 5–5 loop`, `stage1 5–18`, `stage2 18–31`, `stage3 31–44`, `opening 44–90` (sounds at 62, 87, 89), `open 90–90 loop`, `closing 91–135`.
 
 ## MIN materials (0x1EC bytes)
 
@@ -181,5 +244,5 @@ Triangles are stored per cell, so the same face can appear in several cells (the
 ## Still unknown / next steps
 * The 6 leading bytes of each collision triangle (maybe edge or neighbour data) and the high bits of the triangle flags.
 * What the overlay flag means (e.g. `Overlay A04_l_08 1`) and the 2nd/3rd/6th u16 of the MDG mesh header.
-* ANM3/ANG animation decoding. The notes in `notes/mk2-mk1 formats msg.txt` describe it, and `Decompress_Vector` is in the GC ELF.
-* BBI (animation descriptor), MIN fields 0x24–0x3C and 0x140+, and the PS2-vs-GameCube differences (GameCube files are big endian; the readers detect the RKV/BNI/CGR byte order, but MDL3/TEX GameCube variants are not implemented).
+* ANM3 header byte 0x05, MDL3 component byte 0x38, BBI event type 0 and the three empty BBI sub-tables. The exact playback rate is assumed to be 30 fps.
+* MIN fields 0x24–0x3C and 0x140+, and the PS2-vs-GameCube differences (GameCube files are big endian; the readers detect the RKV/BNI/CGR byte order, but MDL3/TEX/ANM3 GameCube variants are not implemented).

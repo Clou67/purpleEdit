@@ -22,6 +22,7 @@ static class Program
                 case "objects": return Objects(args);
                 case "validate": return Validate(args);
                 case "cgr": return Cgr(args);
+                case "anim": return Anim(args);
                 default: Usage(); return 1;
             }
         }
@@ -43,6 +44,7 @@ static class Program
   mk2cli tex      <file.tex|gameRoot name> <out.png>
   mk2cli bni      <file.bni> [out.txt]               decompile a binary ini to text
   mk2cli cgr      <file.cgr>                         collision summary
+  mk2cli anim     <gameRoot> <name> [--keys]         skeleton, clips and matched model of <name>.anm
   mk2cli extract  <archive.rkv|.bpk> <outDir> [--group]
   mk2cli validate <gameRoot>                         parse every asset and report failures
 
@@ -173,6 +175,45 @@ gameRoot = any folder containing the extracted files and/or .BPK/.RKV archives."
         return 0;
     }
 
+    static int Anim(string[] a)
+    {
+        var g = Open(a[1]);
+        string name = a[2];
+        var cache = new AssetCache(g);
+        var anim = cache.GetAnimation(name);
+        if (anim == null) { Console.WriteLine($"{name}.anm not found or not readable"); foreach (var w in cache.Warnings) Console.WriteLine("  " + w); return 1; }
+        var set = cache.GetAnimSet(name, anim);
+        string model = AnimationLookup.FindModelFor(g, name, anim);
+        Console.WriteLine($"{name}: {anim.Bones.Count} bones, {anim.FrameCount} frames, {anim.TransformCount} ANG transforms, header byte5={anim.HeaderByte5}");
+        Console.WriteLine($"  model: {model ?? "(no match)"}");
+        if (model != null)
+        {
+            var lm = cache.GetModel(model, null);
+            var warn = AnimationLookup.CompatibilityWarning(lm?.Model, anim);
+            if (warn != null) Console.WriteLine("  warning: " + warn);
+        }
+        foreach (var w in anim.Warnings) Console.WriteLine("  warning: " + w);
+        Console.WriteLine();
+        foreach (var b in anim.Bones)
+        {
+            Console.WriteLine($"  {b.Index,3} {b.Name,-32} parent {(b.Parent < 0 ? "-" : b.Parent.ToString()),3}  {b.KeyType,-15} {b.Keys.Count,5} keys{(b.IsAnimated ? "" : "  (static)")}  bind {b.BindPosition}");
+            if (a.Contains("--keys"))
+                foreach (var k in b.Keys.Take(12))
+                    Console.WriteLine($"        f{k.Frame,-6} pos {k.Position}  rot {k.Rotation}  scale {k.Scale}");
+        }
+        if (set != null)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"  clips ({set.Clips.Count}):");
+            foreach (var c in set.Clips)
+            {
+                Console.WriteLine($"    {c.Start,6}-{c.End,-6} {(c.Loop ? "loop" : "once")}  {c.Name}");
+                foreach (var e in c.Events) Console.WriteLine($"             @{e.Frame} {(e.Type == 1 ? "sound" : "type " + e.Type)} {e.Name}");
+            }
+        }
+        return 0;
+    }
+
     static int Validate(string[] a)
     {
         var g = Open(a[1]);
@@ -202,6 +243,19 @@ gameRoot = any folder containing the extracted files and/or .BPK/.RKV archives."
                             Bump(m.Meshes.Any(x => x.Skinned) ? "mdl(skinned)" : "mdl(static)");
                             break;
                         }
+                        case ".anm":
+                        {
+                            string n = Path.GetFileNameWithoutExtension(e.Name);
+                            var anim = Animation.Load(arc.Read(e), g.Read(n + ".ang", packs), n);
+                            if (anim.Warnings.Count > 0) throw new Exception(string.Join("; ", anim.Warnings));
+                            foreach (var b in anim.Bones)
+                                for (int k = 1; k < b.Keys.Count; k++)
+                                    if (b.Keys[k].Frame < b.Keys[k - 1].Frame) throw new Exception($"{b.Name}: keys out of order");
+                            foreach (var t in anim.Bones.Select(b => b.KeyType).Distinct()) Bump("anm keys " + t);
+                            Bump("anm");
+                            break;
+                        }
+                        case ".bbi": AnimSet.Parse(arc.Read(e)); Bump("bbi"); break;
                         case ".tex": Bump("tex fmt " + Texture.Decode(arc.Read(e)).Format.ToString("X2")); break;
                         case ".cgr": Collision.Load(arc.Read(e)); Bump("cgr"); break;
                         case ".bni": BniFile.Parse(arc.Read(e)); Bump("bni"); break;
