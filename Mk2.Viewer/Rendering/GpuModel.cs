@@ -20,7 +20,6 @@ namespace Mk2.Viewer.Rendering
         public int Triangles;
         public bool Transparent => Material.Blend != BlendMode.Opaque || (TextureHasAlpha && !Material.AlphaTest && !TextureIsCutout);
         public bool TextureIsCutout;
-        /// <summary>Bind-pose copy of the vertices for CPU skinning (only on models built as animatable).</summary>
         public SkinSource Skin;
     }
 
@@ -121,17 +120,24 @@ namespace Mk2.Viewer.Rendering
             return g;
         }
 
-        /// <summary>
-        /// Poses the model on the CPU with skinning matrices (bind pose → posed, model space, row vectors)
-        /// and re-uploads the vertex buffers. Skinned vertices blend two bones; other vertices follow their
-        /// component's rigid bone, or stay in place. Updates Min/Max to the posed bounds.
-        /// </summary>
         public void ApplySkin(Matrix4x4[] skin)
         {
             if (!Animatable || skin == null) return;
             var min = new Vector3(float.MaxValue);
             var max = new Vector3(float.MinValue);
             int nb = skin.Length;
+
+            var bindMin = new Vector3(float.MaxValue);
+            var bindMax = new Vector3(float.MinValue);
+            foreach (var p in Parts)
+            {
+                if (p.Skin == null || p.IsCollisionComponent) continue;
+                foreach (var bp in p.Skin.Positions) { bindMin = Vector3.Min(bindMin, bp); bindMax = Vector3.Max(bindMax, bp); }
+            }
+            float bindRadius = bindMin.X <= bindMax.X ? Math.Max((bindMax - bindMin).Length(), 1f) : 1000f;
+            float maxStray = bindRadius * 6f + 200f;
+            var bindCenter = bindMin.X <= bindMax.X ? (bindMin + bindMax) * 0.5f : Vector3.Zero;
+
             foreach (var p in Parts)
             {
                 var s = p.Skin;
@@ -158,6 +164,11 @@ namespace Mk2.Viewer.Rendering
                         nrm = Vector3.TransformNormal(s.Normals[i], skin[s.RigidBone]);
                     }
                     else
+                    {
+                        pos = s.Positions[i];
+                        nrm = s.Normals[i];
+                    }
+                    if (float.IsNaN(pos.X) || float.IsInfinity(pos.X) || (pos - bindCenter).Length() > maxStray)
                     {
                         pos = s.Positions[i];
                         nrm = s.Normals[i];

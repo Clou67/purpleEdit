@@ -32,11 +32,8 @@ namespace Mk2.Viewer.Rendering
 
         public bool CategoryVisible(ObjectCategory c) => !HiddenCategories.Contains(c);
 
-        // ---- per-chunk / per-item visibility from the Scene tree (tuple keys: no per-frame allocations)
-        /// <summary>Hidden groups per chunk: "overlays", "objects", "grounds", "dome".</summary>
         public readonly HashSet<(string chunk, string group)> HiddenGroups = new HashSet<(string, string)>();
         public readonly HashSet<(string chunk, ObjectCategory cat)> HiddenChunkCategories = new HashSet<(string, ObjectCategory)>();
-        /// <summary>Individually hidden overlays / ground collision meshes.</summary>
         public readonly HashSet<(string chunk, string name)> HiddenItems = new HashSet<(string, string)>();
         public readonly HashSet<LevelObject> HiddenObjects = new HashSet<LevelObject>();
 

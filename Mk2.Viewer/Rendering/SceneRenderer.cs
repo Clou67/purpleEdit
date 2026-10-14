@@ -6,12 +6,10 @@ using Mk2.Formats;
 using Mk2.Game;
 using OpenTK.Graphics.OpenGL4;
 
-namespace Mk2.Viewer.Rendering
-{
+namespace Mk2.Viewer.Rendering {
     public enum ItemKind { Overlay, Object, EnvDome }
 
-    public sealed class DrawItem
-    {
+    public sealed class DrawItem {
         public GpuModel Model;
         public Matrix4x4 World;
         public LevelObject Object;
@@ -21,8 +19,7 @@ namespace Mk2.Viewer.Rendering
         public Vector3 WorldMin, WorldMax;
     }
 
-    public sealed class CollisionItem
-    {
+    public sealed class CollisionItem {
         public GpuMesh Mesh;
         public Matrix4x4 World;
         public SceneChunk Chunk;
@@ -32,8 +29,7 @@ namespace Mk2.Viewer.Rendering
         public Vector3 WorldMin, WorldMax;
     }
 
-    public sealed class PickResult
-    {
+    public sealed class PickResult {
         public DrawItem Item;
         public LevelObject Object;
         public float Distance;
@@ -42,8 +38,7 @@ namespace Mk2.Viewer.Rendering
     }
 
     /// <summary>Owns all GPU resources for one loaded scene and draws it.</summary>
-    public sealed partial class SceneRenderer : IDisposable
-    {
+    public sealed partial class SceneRenderer : IDisposable {
         public LevelScene Scene { get; private set; }
         public readonly List<DrawItem> Items = new List<DrawItem>();
         public readonly List<CollisionItem> Collisions = new List<CollisionItem>();
@@ -77,16 +72,13 @@ namespace Mk2.Viewer.Rendering
             { ObjectCategory.Critter, new Vector4(0.6f, 1.0f, 0.6f, 1) },
         };
 
-        public void InitGl()
-        {
+        public void InitGl() {
             _mesh ??= new ShaderProgram(Shaders.MeshVS, Shaders.MeshFS);
             _lines ??= new ShaderProgram(Shaders.LineVS, Shaders.LineFS);
-            if (_gridLines == null)
-            {
+            if (_gridLines == null) {
                 var g = new List<float>();
                 var col = new Vector4(0.35f, 0.35f, 0.4f, 1);
-                for (int i = -20; i <= 20; i++)
-                {
+                for (int i = -20; i <= 20; i++) {
                     Line(g, new Vector3(i * 1000, 0, -20000), new Vector3(i * 1000, 0, 20000), col);
                     Line(g, new Vector3(-20000, 0, i * 1000), new Vector3(20000, 0, i * 1000), col);
                 }
@@ -94,27 +86,22 @@ namespace Mk2.Viewer.Rendering
             }
         }
 
-        public void Load(LevelScene scene)
-        {
+        public void Load(LevelScene scene) {
             DisposeSceneResources();
             Scene = scene;
             _textures = new TextureCache(scene.Assets);
             var min = new Vector3(float.MaxValue);
             var max = new Vector3(float.MinValue);
 
-            foreach (var ch in scene.Chunks)
-            {
-                foreach (var (ov, lm) in ch.Overlays)
-                {
+            foreach (var ch in scene.Chunks) {
+                foreach (var (ov, lm) in ch.Overlays) {
                     if (lm == null) continue;
                     AddItem(new DrawItem { Model = Gpu(lm), World = Matrix4x4.Identity, Chunk = ch, Kind = ItemKind.Overlay, Name = ov.Name });
                 }
                 if (ch.EnvDome != null)
                     AddItem(new DrawItem { Model = Gpu(ch.EnvDome), World = Matrix4x4.Identity, Chunk = ch, Kind = ItemKind.EnvDome, Name = ch.EnvDome.Name });
-                foreach (var o in ch.Objects)
-                {
-                    if (ch.ObjectModels.TryGetValue(o, out var lm))
-                    {
+                foreach (var o in ch.Objects) {
+                    if (ch.ObjectModels.TryGetValue(o, out var lm)) {
                         var w = o.ModelMatrix;
                         AddItem(new DrawItem { Model = Gpu(lm), World = w, Chunk = ch, Kind = ItemKind.Object, Object = o, Name = lm.Name });
                         foreach (var c in lm.Collisions)
@@ -124,59 +111,50 @@ namespace Mk2.Viewer.Rendering
                 foreach (var (name, c) in ch.Grounds) AddCollision(c, Matrix4x4.Identity, ch, null, name);
                 BuildLines(ch);
             }
-            foreach (var it in Items.Where(i => i.Kind == ItemKind.Overlay || i.Kind == ItemKind.Object))
-            {
+            foreach (var it in Items.Where(i => i.Kind == ItemKind.Overlay || i.Kind == ItemKind.Object)) {
                 min = Vector3.Min(min, it.WorldMin);
                 max = Vector3.Max(max, it.WorldMax);
             }
-            if (min.X > max.X)
-            {
+            if (min.X > max.X) {
                 foreach (var c in Collisions) { /* fall back to collision extents */ }
                 min = new Vector3(-1000); max = new Vector3(1000);
             }
             SceneMin = min; SceneMax = max;
         }
 
-        private GpuModel Gpu(LoadedModel lm)
-        {
+        private GpuModel Gpu(LoadedModel lm) {
             if (_models.TryGetValue(lm, out var g)) return g;
             g = GpuModel.Build(lm, _textures);
             _models[lm] = g;
             return g;
         }
 
-        private void AddItem(DrawItem it)
-        {
+        private void AddItem(DrawItem it) {
             TransformBounds(it.Model.Min, it.Model.Max, it.World, out it.WorldMin, out it.WorldMax);
             Items.Add(it);
         }
 
-        private static void TransformBounds(Vector3 min, Vector3 max, Matrix4x4 m, out Vector3 wmin, out Vector3 wmax)
-        {
+        private static void TransformBounds(Vector3 min, Vector3 max, Matrix4x4 m, out Vector3 wmin, out Vector3 wmax) {
             wmin = new Vector3(float.MaxValue); wmax = new Vector3(float.MinValue);
-            for (int i = 0; i < 8; i++)
-            {
+            for (int i = 0; i < 8; i++) {
                 var p = new Vector3((i & 1) != 0 ? max.X : min.X, (i & 2) != 0 ? max.Y : min.Y, (i & 4) != 0 ? max.Z : min.Z);
                 var w = Vector3.Transform(p, m);
                 wmin = Vector3.Min(wmin, w); wmax = Vector3.Max(wmax, w);
             }
         }
 
-        private void AddCollision(Collision c, Matrix4x4 world, SceneChunk ch, LevelObject o, string name = null)
-        {
+        private void AddCollision(Collision c, Matrix4x4 world, SceneChunk ch, LevelObject o, string name = null) {
             if (c == null || c.Triangles.Count == 0) return;
             // Flat-shaded: unshared vertices so each face gets its own normal and material colour.
             var data = new float[c.Triangles.Count * 3 * GpuMesh.Stride];
             var idx = new uint[c.Triangles.Count * 3];
             int k = 0;
-            foreach (var t in c.Triangles)
-            {
+            foreach (var t in c.Triangles) {
                 var a = c.Vertices[t.A]; var b = c.Vertices[t.B]; var cc = c.Vertices[t.C];
                 var n = Vector3.Cross(b - a, cc - a);
                 n = n.LengthSquared() > 1e-12f ? Vector3.Normalize(n) : Vector3.UnitY;
                 var col = MaterialColor(c.MaterialName(t), t.Flags);
-                foreach (var p in new[] { a, b, cc })
-                {
+                foreach (var p in new[] { a, b, cc }) {
                     int o2 = k * GpuMesh.Stride;
                     data[o2] = p.X; data[o2 + 1] = p.Y; data[o2 + 2] = p.Z;
                     data[o2 + 3] = n.X; data[o2 + 4] = n.Y; data[o2 + 5] = n.Z;
@@ -188,16 +166,20 @@ namespace Mk2.Viewer.Rendering
             var lmin = new Vector3(float.MaxValue); var lmax = new Vector3(float.MinValue);
             foreach (var p in c.Vertices) { lmin = Vector3.Min(lmin, p); lmax = Vector3.Max(lmax, p); }
             TransformBounds(lmin, lmax, world, out var wmin, out var wmax);
-            Collisions.Add(new CollisionItem
-            {
-                Mesh = GpuMesh.Create(data, idx), World = world, Chunk = ch, Object = o,
-                Name = name ?? c.Name, Triangles = c.Triangles.Count, WorldMin = wmin, WorldMax = wmax,
+            Collisions.Add(new CollisionItem {
+                Mesh = GpuMesh.Create(data, idx),
+                World = world,
+                Chunk = ch,
+                Object = o,
+                Name = name ?? c.Name,
+                Triangles = c.Triangles.Count,
+                WorldMin = wmin,
+                WorldMax = wmax,
             });
         }
 
         /// <summary>Stable pastel colour per collision material name.</summary>
-        public static Vector3 MaterialColor(string name, ushort flags)
-        {
+        public static Vector3 MaterialColor(string name, ushort flags) {
             uint h = 2166136261;
             foreach (char ch in name ?? "") h = (h ^ char.ToLowerInvariant(ch)) * 16777619;
             float r = 0.35f + ((h >> 0) & 0xFF) / 255f * 0.6f;
@@ -208,19 +190,16 @@ namespace Mk2.Viewer.Rendering
 
         // ---------------------------------------------------------------- debug lines
 
-        private static void Line(List<float> d, Vector3 a, Vector3 b, Vector4 c)
-        {
+        private static void Line(List<float> d, Vector3 a, Vector3 b, Vector4 c) {
             d.Add(a.X); d.Add(a.Y); d.Add(a.Z); d.Add(c.X); d.Add(c.Y); d.Add(c.Z); d.Add(c.W);
             d.Add(b.X); d.Add(b.Y); d.Add(b.Z); d.Add(c.X); d.Add(c.Y); d.Add(c.Z); d.Add(c.W);
         }
 
-        public static void Box(List<float> d, Vector3 center, Vector3 rot, Vector3 size, Vector4 c)
-        {
+        public static void Box(List<float> d, Vector3 center, Vector3 rot, Vector3 size, Vector4 c) {
             var m = LevelObject.RotationPYR(rot);
             var h = size * 0.5f;
             var p = new Vector3[8];
-            for (int i = 0; i < 8; i++)
-            {
+            for (int i = 0; i < 8; i++) {
                 var l = new Vector3((i & 1) != 0 ? h.X : -h.X, (i & 2) != 0 ? h.Y : -h.Y, (i & 4) != 0 ? h.Z : -h.Z);
                 p[i] = center + Vector3.TransformNormal(l, m);
             }
@@ -231,12 +210,10 @@ namespace Mk2.Viewer.Rendering
         public static void AabbLines(List<float> d, Vector3 min, Vector3 max, Vector4 c) =>
             Box(d, (min + max) * 0.5f, Vector3.Zero, max - min, c);
 
-        public static void Sphere(List<float> d, Vector3 center, float r, Vector4 c)
-        {
+        public static void Sphere(List<float> d, Vector3 center, float r, Vector4 c) {
             const int N = 32;
             for (int axis = 0; axis < 3; axis++)
-                for (int i = 0; i < N; i++)
-                {
+                for (int i = 0; i < N; i++) {
                     float a0 = i * MathF.PI * 2 / N, a1 = (i + 1) * MathF.PI * 2 / N;
                     Vector3 P(float a) => axis == 0 ? new Vector3(0, MathF.Cos(a), MathF.Sin(a)) * r
                                        : axis == 1 ? new Vector3(MathF.Cos(a), 0, MathF.Sin(a)) * r
@@ -245,34 +222,28 @@ namespace Mk2.Viewer.Rendering
                 }
         }
 
-        public static void Cross(List<float> d, Vector3 p, float s, Vector4 c)
-        {
+        public static void Cross(List<float> d, Vector3 p, float s, Vector4 c) {
             Line(d, p - Vector3.UnitX * s, p + Vector3.UnitX * s, c);
             Line(d, p - Vector3.UnitY * s, p + Vector3.UnitY * s, c);
             Line(d, p - Vector3.UnitZ * s, p + Vector3.UnitZ * s, c);
         }
 
-        public static void ShapeLines(List<float> d, LevelObject o, Vector4 col)
-        {
-            foreach (var s in o.Shapes)
-            {
-                switch (s.Kind)
-                {
+        public static void ShapeLines(List<float> d, LevelObject o, Vector4 col) {
+            foreach (var s in o.Shapes) {
+                switch (s.Kind) {
                     case ShapeKind.Box: Box(d, s.Center, s.Rotation, s.Size, col); break;
                     case ShapeKind.Sphere: Sphere(d, s.Center, s.Radius, col); break;
                     case ShapeKind.Polyline:
-                    case ShapeKind.Polygon:
-                    {
-                        var dim = col * new Vector4(0.6f, 0.6f, 0.6f, 1);
-                        for (int i = 0; i + 1 < s.Points.Count; i++) Line(d, s.Points[i], s.Points[i + 1], col);
-                        if (s.Kind == ShapeKind.Polygon && s.Points.Count > 2) Line(d, s.Points[^1], s.Points[0], col);
-                        foreach (var p in s.Points) Line(d, p, p + Vector3.UnitY * 150, dim);
-                        if (s.Points.Count > 0) Line(d, o.Position, s.Points[0], dim);
-                        break;
-                    }
+                    case ShapeKind.Polygon: {
+                            var dim = col * new Vector4(0.6f, 0.6f, 0.6f, 1);
+                            for (int i = 0; i + 1 < s.Points.Count; i++) Line(d, s.Points[i], s.Points[i + 1], col);
+                            if (s.Kind == ShapeKind.Polygon && s.Points.Count > 2) Line(d, s.Points[^1], s.Points[0], col);
+                            foreach (var p in s.Points) Line(d, p, p + Vector3.UnitY * 150, dim);
+                            if (s.Points.Count > 0) Line(d, o.Position, s.Points[0], dim);
+                            break;
+                        }
                     case ShapeKind.CameraLine:
-                        if (s.Points.Count == 2)
-                        {
+                        if (s.Points.Count == 2) {
                             Line(d, s.Points[0], s.Points[1], col);
                             Box(d, s.Points[0], Vector3.Zero, new Vector3(60), col);
                         }
@@ -282,8 +253,7 @@ namespace Mk2.Viewer.Rendering
         }
 
         /// <summary>Re-create the debug line batches (after individual objects were hidden/shown).</summary>
-        public void RebuildLines(ViewSettings s)
-        {
+        public void RebuildLines(ViewSettings s) {
             foreach (var l in _shapeLines.Values) l.Dispose();
             foreach (var l in _markerLines.Values) l.Dispose();
             _shapeLines.Clear();
@@ -292,18 +262,14 @@ namespace Mk2.Viewer.Rendering
             foreach (var ch in Scene.Chunks) BuildLines(ch, s);
         }
 
-        private void BuildLines(SceneChunk ch, ViewSettings s = null)
-        {
-            foreach (var grp in ch.Objects.Where(o => s == null || !s.HiddenObjects.Contains(o)).GroupBy(o => o.Category))
-            {
+        private void BuildLines(SceneChunk ch, ViewSettings s = null) {
+            foreach (var grp in ch.Objects.Where(o => s == null || !s.HiddenObjects.Contains(o)).GroupBy(o => o.Category)) {
                 var col = CategoryColors[grp.Key];
                 var shapes = new List<float>();
                 var markers = new List<float>();
-                foreach (var o in grp)
-                {
+                foreach (var o in grp) {
                     ShapeLines(shapes, o, col);
-                    if (!ch.ObjectModels.ContainsKey(o))
-                    {
+                    if (!ch.ObjectModels.ContainsKey(o)) {
                         Cross(markers, o.Position, 60, col);
                         Box(markers, o.Position, o.Rotation, new Vector3(40), col);
                         // forward tick to show facing
@@ -316,8 +282,7 @@ namespace Mk2.Viewer.Rendering
             }
         }
 
-        public void SetSelection(LevelObject o, DrawItem item = null)
-        {
+        public void SetSelection(LevelObject o, DrawItem item = null) {
             Selected = o;
             SelectedItem = item ?? (o == null ? null : Items.FirstOrDefault(i => i.Object == o));
             _selectionLines?.Dispose();
@@ -325,8 +290,7 @@ namespace Mk2.Viewer.Rendering
             var d = new List<float>();
             var y = new Vector4(1, 1, 0, 1);
             if (SelectedItem != null) AabbLines(d, SelectedItem.WorldMin, SelectedItem.WorldMax, y);
-            if (o != null)
-            {
+            if (o != null) {
                 ShapeLines(d, o, y);
                 Cross(d, o.Position, 120, y);
             }
@@ -334,11 +298,9 @@ namespace Mk2.Viewer.Rendering
 
             _selectionFill?.Dispose();
             _selectionFill = null;
-            if (o != null && SelectedItem == null)
-            {
+            if (o != null && SelectedItem == null) {
                 var v = new List<float>(); var ix = new List<uint>();
-                foreach (var sh in o.Shapes)
-                {
+                foreach (var sh in o.Shapes) {
                     if (sh.Kind == ShapeKind.Box) FillBox(v, ix, sh.Center, sh.Rotation, sh.Size);
                     else if (sh.Kind == ShapeKind.Sphere) FillSphere(v, ix, sh.Center, sh.Radius);
                     else if (sh.Kind == ShapeKind.Polygon && sh.Points.Count >= 3) FillPolygon(v, ix, sh.Points);
@@ -349,58 +311,49 @@ namespace Mk2.Viewer.Rendering
             }
         }
 
-        private static void Vert(List<float> v, Vector3 p, Vector3 n)
-        {
+        private static void Vert(List<float> v, Vector3 p, Vector3 n) {
             v.Add(p.X); v.Add(p.Y); v.Add(p.Z); v.Add(n.X); v.Add(n.Y); v.Add(n.Z);
             v.Add(0); v.Add(0); v.Add(1); v.Add(1); v.Add(1); v.Add(1);
         }
 
-        private static void FillBox(List<float> v, List<uint> ix, Vector3 c, Vector3 rot, Vector3 size)
-        {
+        private static void FillBox(List<float> v, List<uint> ix, Vector3 c, Vector3 rot, Vector3 size) {
             var m = LevelObject.RotationPYR(rot);
             var h = size * 0.5f;
             uint b = (uint)(v.Count / GpuMesh.Stride);
-            for (int i = 0; i < 8; i++)
-            {
+            for (int i = 0; i < 8; i++) {
                 var l = new Vector3((i & 1) != 0 ? h.X : -h.X, (i & 2) != 0 ? h.Y : -h.Y, (i & 4) != 0 ? h.Z : -h.Z);
                 Vert(v, c + Vector3.TransformNormal(l, m), Vector3.UnitY);
             }
-            int[] f = { 0,1,3, 0,3,2, 4,6,7, 4,7,5, 0,4,5, 0,5,1, 2,3,7, 2,7,6, 0,2,6, 0,6,4, 1,5,7, 1,7,3 };
+            int[] f = { 0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5, 0, 4, 5, 0, 5, 1, 2, 3, 7, 2, 7, 6, 0, 2, 6, 0, 6, 4, 1, 5, 7, 1, 7, 3 };
             foreach (var k in f) ix.Add(b + (uint)k);
         }
 
-        private static void FillSphere(List<float> v, List<uint> ix, Vector3 c, float r)
-        {
+        private static void FillSphere(List<float> v, List<uint> ix, Vector3 c, float r) {
             const int S = 16, R = 10;
             uint b = (uint)(v.Count / GpuMesh.Stride);
             for (int y = 0; y <= R; y++)
-                for (int x = 0; x <= S; x++)
-                {
+                for (int x = 0; x <= S; x++) {
                     float th = y * MathF.PI / R, ph = x * 2 * MathF.PI / S;
                     var n = new Vector3(MathF.Sin(th) * MathF.Cos(ph), MathF.Cos(th), MathF.Sin(th) * MathF.Sin(ph));
                     Vert(v, c + n * r, n);
                 }
             for (int y = 0; y < R; y++)
-                for (int x = 0; x < S; x++)
-                {
+                for (int x = 0; x < S; x++) {
                     uint a = b + (uint)(y * (S + 1) + x), d = a + S + 1;
                     ix.Add(a); ix.Add(d); ix.Add(a + 1); ix.Add(a + 1); ix.Add(d); ix.Add(d + 1);
                 }
         }
 
-        private static void FillPolygon(List<float> v, List<uint> ix, List<Vector3> pts)
-        {
+        private static void FillPolygon(List<float> v, List<uint> ix, List<Vector3> pts) {
             uint b = (uint)(v.Count / GpuMesh.Stride);
             foreach (var p in pts) Vert(v, p, Vector3.UnitY);
             for (int i = 1; i + 1 < pts.Count; i++) { ix.Add(b); ix.Add(b + (uint)i); ix.Add(b + (uint)i + 1); }
         }
 
-        public bool Visible(DrawItem it, ViewSettings s)
-        {
+        public bool Visible(DrawItem it, ViewSettings s) {
             if (Anim != null && Anim.Item == it && !s.AnimatedMesh) return false;
             string ch = it.Chunk.Def.Name;
-            switch (it.Kind)
-            {
+            switch (it.Kind) {
                 case ItemKind.Overlay: return s.OverlayVisible(ch, it.Name);
                 case ItemKind.EnvDome: return s.DomeVisible(ch);
                 case ItemKind.Object: return s.ObjectVisible(it.Object);
@@ -412,8 +365,7 @@ namespace Mk2.Viewer.Rendering
         private readonly Vector4[] _planes = new Vector4[6];
         private readonly List<DrawItem> _visible = new List<DrawItem>();
 
-        private void ExtractFrustum(Matrix4x4 m)
-        {
+        private void ExtractFrustum(Matrix4x4 m) {
             var c1 = new Vector4(m.M11, m.M21, m.M31, m.M41);
             var c2 = new Vector4(m.M12, m.M22, m.M32, m.M42);
             var c3 = new Vector4(m.M13, m.M23, m.M33, m.M43);
@@ -423,10 +375,8 @@ namespace Mk2.Viewer.Rendering
             _planes[4] = c4 + c3; _planes[5] = c4 - c3;
         }
 
-        private bool InFrustum(Vector3 min, Vector3 max)
-        {
-            for (int i = 0; i < 6; i++)
-            {
+        private bool InFrustum(Vector3 min, Vector3 max) {
+            for (int i = 0; i < 6; i++) {
                 var p = _planes[i];
                 // farthest corner along the plane normal
                 float x = p.X >= 0 ? max.X : min.X, y = p.Y >= 0 ? max.Y : min.Y, z = p.Z >= 0 ? max.Z : min.Z;
@@ -437,9 +387,19 @@ namespace Mk2.Viewer.Rendering
 
         // ---------------------------------------------------------------- drawing
 
-        public void Render(Camera cam, int width, int height, ViewSettings s, Vector3 clearColor, Vector3 fogColor, Vector2 fogRange)
-        {
+        /// <summary>Set non-null to capture which labelled stage of Render() first raised a GL error (debugging the model-viewer FBO path).</summary>
+        public Action<string> DebugStageError;
+
+        private void CheckGl(string stage) {
+            if (DebugStageError == null) return;
+            var err = GL.GetError();
+            if (err != ErrorCode.NoError) DebugStageError(stage + ": " + err);
+        }
+
+        public void Render(Camera cam, int width, int height, ViewSettings s, Vector3 clearColor, Vector3 fogColor, Vector2 fogRange) {
+            if (DebugStageError != null) { while (GL.GetError() != ErrorCode.NoError) { } } // drain any stale/pre-existing error so later checks aren't misattributed
             InitGl();
+            CheckGl("InitGl");
             GL.Viewport(0, 0, Math.Max(width, 1), Math.Max(height, 1));
             GL.ClearColor(clearColor.X, clearColor.Y, clearColor.Z, 1);
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
@@ -454,7 +414,9 @@ namespace Mk2.Viewer.Rendering
             GL.FrontFace(s.MirrorX ? FrontFaceDirection.Cw : FrontFaceDirection.Ccw);
             GL.Enable(EnableCap.DepthTest);
             GL.DepthFunc(DepthFunction.Lequal);
+            GL.Disable(EnableCap.StencilTest);
             GL.PolygonMode(TriangleFace.FrontAndBack, s.Wireframe ? PolygonMode.Line : PolygonMode.Fill);
+            CheckGl("State setup");
 
             _mesh.Use();
             _mesh.Set("uViewProj", viewProj);
@@ -468,14 +430,12 @@ namespace Mk2.Viewer.Rendering
             GL.ActiveTexture(TextureUnit.Texture0);
 
             // 1. Environment dome, centred on the camera, behind everything.
-            if (s.EnvDome && Scene != null)
-            {
+            if (s.EnvDome && Scene != null) {
                 GL.Disable(EnableCap.DepthTest);
                 GL.DepthMask(false);
                 GL.Disable(EnableCap.CullFace);
                 var eye = s.MirrorX ? cam.Position * new Vector3(-1, 1, 1) : cam.Position;
-                foreach (var it in Items)
-                {
+                foreach (var it in Items) {
                     if (it.Kind != ItemKind.EnvDome || !Visible(it, s)) continue;
                     var c = (it.Model.Min + it.Model.Max) * 0.5f;
                     var w = Matrix4x4.CreateTranslation(eye - new Vector3(c.X, 0, c.Z));
@@ -485,6 +445,7 @@ namespace Mk2.Viewer.Rendering
                 GL.Enable(EnableCap.DepthTest);
                 GL.DepthMask(true);
             }
+            CheckGl("EnvDome pass");
 
             if (s.CullBackfaces) { GL.Enable(EnableCap.CullFace); GL.CullFace(TriangleFace.Back); }
             else GL.Disable(EnableCap.CullFace);
@@ -495,17 +456,20 @@ namespace Mk2.Viewer.Rendering
             foreach (var it in Items)
                 if (it.Kind != ItemKind.EnvDome && Visible(it, s) && InFrustum(it.WorldMin, it.WorldMax)) _visible.Add(it);
             GL.Disable(EnableCap.Blend);
-            foreach (var it in _visible) DrawModel(it.Model, it.World, s, time, pass: 0);
+            int opaqueIndex = 0;
+            foreach (var it in _visible) {
+                DrawModel(it.Model, it.World, s, time, pass: 0);
+                if (DebugStageError != null) CheckGl($"Opaque pass, item {opaqueIndex} ({it.Name})");
+                opaqueIndex++;
+            }
 
             // 3. Collision.
-            if (s.GroundCollision || s.ObjectCollision)
-            {
+            if (s.GroundCollision || s.ObjectCollision) {
                 bool overlay = s.CollisionOverlay;
                 // Pull collision slightly towards the camera so it wins over the coincident visual mesh.
                 GL.Enable(EnableCap.PolygonOffsetFill);
                 GL.PolygonOffset(-1f, -2f);
-                if (overlay)
-                {
+                if (overlay) {
                     GL.Enable(EnableCap.Blend);
                     GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
                     GL.DepthMask(false);
@@ -518,8 +482,7 @@ namespace Mk2.Viewer.Rendering
                 _mesh.Set("uTint", new Vector4(1, 1, 1, overlay ? 0.45f : 1f));
                 float prevBright = s.Brightness;
                 _mesh.Set("uBrightness", 1f);
-                foreach (var c in Collisions)
-                {
+                foreach (var c in Collisions) {
                     if (c.Object == null ? !s.GroundVisible(c.Chunk.Def.Name, c.Name) : (!s.ObjectCollision || !s.ObjectVisible(c.Object))) continue;
                     if (!InFrustum(c.WorldMin, c.WorldMax)) continue;
                     _mesh.Set("uModel", c.World);
@@ -531,20 +494,22 @@ namespace Mk2.Viewer.Rendering
                 GL.DepthMask(true);
                 GL.Disable(EnableCap.Blend);
             }
+            CheckGl("Collision pass");
 
             // 4. Transparent geometry (no sorting; depth writes off).
-            if (s.Transparency)
-            {
+            if (s.Transparency) {
                 GL.Enable(EnableCap.Blend);
                 GL.DepthMask(false);
                 foreach (var it in _visible) DrawModel(it.Model, it.World, s, time, pass: 1);
                 GL.DepthMask(true);
                 GL.Disable(EnableCap.Blend);
             }
+            CheckGl("Transparent pass");
 
             // 4b. Selection highlight on the selected model itself.
             if (SelectedItem != null && Visible(SelectedItem, s))
                 DrawSelectionHighlight(SelectedItem, s);
+            CheckGl("Selection highlight");
 
             // 5. Lines.
             GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Fill);
@@ -553,8 +518,7 @@ namespace Mk2.Viewer.Rendering
             _lines.Set("uModel", Matrix4x4.Identity);
             _lines.Set("uTint", Vector4.One);
             if (Scene == null || Items.Count == 0) _gridLines?.Draw();
-            if (s.Objects)
-            {
+            if (s.Objects) {
                 if (s.Shapes)
                     foreach (var kv in _shapeLines)
                         if (s.CategoryBatchVisible(kv.Key.chunk, kv.Key.cat)) kv.Value.Draw();
@@ -562,8 +526,7 @@ namespace Mk2.Viewer.Rendering
                     foreach (var kv in _markerLines)
                         if (s.CategoryBatchVisible(kv.Key.chunk, kv.Key.cat)) kv.Value.Draw();
             }
-            if (_selectionFill != null)
-            {
+            if (_selectionFill != null) {
                 float pulse = 0.5f + 0.5f * MathF.Sin((float)(DateTime.Now - _start).TotalSeconds * 4f);
                 _mesh.Use();
                 _mesh.Set("uModel", Matrix4x4.Identity);
@@ -580,21 +543,22 @@ namespace Mk2.Viewer.Rendering
                 _mesh.Set("uFog", s.Fog);
                 _lines.Use();
             }
+            CheckGl("Shapes/markers/selectionFill");
             DrawSkeleton(s);
-            if (_selectionLines != null)
-            {
+            CheckGl("Skeleton");
+            if (_selectionLines != null) {
                 GL.Disable(EnableCap.DepthTest);
                 float pl = 0.6f + 0.4f * MathF.Sin((float)(DateTime.Now - _start).TotalSeconds * 4f);
                 _lines.Set("uTint", new Vector4(1, 1, pl, 1));
                 _selectionLines.Draw();
                 GL.Enable(EnableCap.DepthTest);
             }
+            CheckGl("Selection lines");
             GL.BindVertexArray(0);
         }
 
         /// <summary>pass 0 = opaque/alpha-test parts, pass 1 = blended parts.</summary>
-        private void DrawSelectionHighlight(DrawItem it, ViewSettings s)
-        {
+        private void DrawSelectionHighlight(DrawItem it, ViewSettings s) {
             float pulse = 0.5f + 0.5f * MathF.Sin((float)(DateTime.Now - _start).TotalSeconds * 4f);
             _mesh.Use();
             _mesh.Set("uModel", it.World);
@@ -610,10 +574,8 @@ namespace Mk2.Viewer.Rendering
             GL.DepthMask(false);
             GL.Disable(EnableCap.CullFace);
 
-            void Parts()
-            {
-                foreach (var p in it.Model.Parts)
-                {
+            void Parts() {
+                foreach (var p in it.Model.Parts) {
                     if (p.IsCollisionComponent && !s.ModelCollisionComponents) continue;
                     if (p.IsFragment && !s.Fragments) continue;
                     p.Mesh.Draw();
@@ -651,17 +613,14 @@ namespace Mk2.Viewer.Rendering
             if (s.CullBackfaces) GL.Enable(EnableCap.CullFace);
         }
 
-        private void DrawModel(GpuModel m, Matrix4x4 world, ViewSettings s, float time, int pass, bool forceNoFog = false)
-        {
+        private void DrawModel(GpuModel m, Matrix4x4 world, ViewSettings s, float time, int pass, bool forceNoFog = false) {
             bool modelSet = false;
-            foreach (var p in m.Parts)
-            {
+            foreach (var p in m.Parts) {
                 if (p.IsCollisionComponent && !s.ModelCollisionComponents) continue;
                 if (p.IsFragment && !s.Fragments) continue;
                 bool transparent = s.Transparency && p.Transparent;
                 if ((pass == 1) != transparent) continue;
-                if (!modelSet)
-                {
+                if (!modelSet) {
                     _mesh.Set("uModel", world);
                     modelSet = true;
                 }
@@ -680,18 +639,18 @@ namespace Mk2.Viewer.Rendering
                 var off = mat.Scrolls ? new Vector2(Frac(mat.ScrollU * time), Frac(mat.ScrollV * time)) : Vector2.Zero;
                 _mesh.Set("uUVOffset", off);
                 if (forceNoFog) _mesh.Set("uFog", false);
-                if (pass == 1)
-                {
+                if (pass == 1) {
                     if (mat.Blend == BlendMode.Additive) GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.One);
-                    else if (mat.Blend == BlendMode.Subtractive)
-                    {
+                    else if (mat.Blend == BlendMode.Subtractive) {
                         GL.BlendEquation(BlendEquationMode.FuncReverseSubtract);
                         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.One);
                     }
                     else GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
                 }
                 GL.BindTexture(TextureTarget.Texture2D, useTex ? p.Texture : 0);
+                if (DebugStageError != null) CheckGl($"  BindTexture (tex={p.Texture}, useTex={useTex})");
                 p.Mesh.Draw();
+                if (DebugStageError != null) CheckGl($"  Mesh.Draw (vao={p.Mesh.Vao}, idx={p.Mesh.IndexCount})");
                 LastDrawnTriangles += p.Triangles;
                 if (pass == 1 && mat.Blend == BlendMode.Subtractive) GL.BlendEquation(BlendEquationMode.FuncAdd);
                 if (forceNoFog) _mesh.Set("uFog", s.Fog);
@@ -702,18 +661,15 @@ namespace Mk2.Viewer.Rendering
 
         // ---------------------------------------------------------------- picking
 
-        private Vector3[] PickTriangles(GpuModel g)
-        {
+        private Vector3[] PickTriangles(GpuModel g) {
             if (_pickTris.TryGetValue(g, out var t)) return t;
             var list = new List<Vector3>();
             var model = g.Source.Model;
-            foreach (var mesh in model.Meshes)
-            {
+            foreach (var mesh in model.Meshes) {
                 var comp = model.Components[mesh.ComponentIndex];
                 if (comp.IsCollision || comp.IsFragment) continue;
                 foreach (var s in mesh.Strips)
-                    for (int i = 0; i + 2 < s.Vertices.Count; i++)
-                    {
+                    for (int i = 0; i + 2 < s.Vertices.Count; i++) {
                         list.Add(s.Vertices[i].Position);
                         list.Add(s.Vertices[i + 1].Position);
                         list.Add(s.Vertices[i + 2].Position);
@@ -724,22 +680,18 @@ namespace Mk2.Viewer.Rendering
             return t;
         }
 
-        public PickResult Pick(Vector3 origin, Vector3 dir, ViewSettings s)
-        {
-            if (s.MirrorX)
-            {
+        public PickResult Pick(Vector3 origin, Vector3 dir, ViewSettings s) {
+            if (s.MirrorX) {
                 origin *= new Vector3(-1, 1, 1);
                 dir *= new Vector3(-1, 1, 1);
             }
             PickResult best = null;
-            void Consider(float t, DrawItem it, LevelObject o, string desc)
-            {
+            void Consider(float t, DrawItem it, LevelObject o, string desc) {
                 if (t < 0 || (best != null && t >= best.Distance)) return;
                 best = new PickResult { Distance = t, Item = it, Object = o, Point = origin + dir * t, Description = desc };
             }
 
-            foreach (var it in Items)
-            {
+            foreach (var it in Items) {
                 if (it.Kind == ItemKind.EnvDome || !Visible(it, s)) continue;
                 if (!RayAabb(origin, dir, it.WorldMin, it.WorldMax, out float tb) || (best != null && tb > best.Distance)) continue;
                 if (!Matrix4x4.Invert(it.World, out var inv)) continue;
@@ -749,42 +701,34 @@ namespace Mk2.Viewer.Rendering
                 float bestLocal = float.MaxValue;
                 for (int i = 0; i < tris.Length; i += 3)
                     if (RayTri(lo, ld, tris[i], tris[i + 1], tris[i + 2], out float tl) && tl < bestLocal) bestLocal = tl;
-                if (bestLocal < float.MaxValue)
-                {
+                if (bestLocal < float.MaxValue) {
                     var hit = Vector3.Transform(lo + ld * bestLocal, it.World);
                     Consider(Vector3.Distance(origin, hit), it, it.Object, it.Kind == ItemKind.Overlay ? "overlay " + it.Name : it.Name);
                 }
             }
 
-            if (Scene != null && s.Objects)
-            {
-                foreach (var ch in Scene.Chunks)
-                {
+            if (Scene != null && s.Objects) {
+                foreach (var ch in Scene.Chunks) {
                     if (s.HiddenChunks.Contains(ch.Def.Name)) continue;
-                    foreach (var o in ch.Objects)
-                    {
+                    foreach (var o in ch.Objects) {
                         if (!s.ObjectVisible(o)) continue;
                         if (!ch.ObjectModels.ContainsKey(o) && s.Markers && RaySphere(origin, dir, o.Position, 70, out float t0))
                             Consider(t0, null, o, o.DisplayName);
                         if (!s.Shapes) continue;
-                        foreach (var sh in o.Shapes)
-                        {
-                            switch (sh.Kind)
-                            {
+                        foreach (var sh in o.Shapes) {
+                            switch (sh.Kind) {
                                 case ShapeKind.Sphere:
                                     if (RaySphereShell(origin, dir, sh.Center, sh.Radius, out float ts)) Consider(ts, null, o, o.DisplayName);
                                     break;
-                                case ShapeKind.Box:
-                                {
-                                    var m = LevelObject.RotationPYR(sh.Rotation) * Matrix4x4.CreateTranslation(sh.Center);
-                                    if (Matrix4x4.Invert(m, out var inv))
-                                    {
-                                        var lo = Vector3.Transform(origin, inv);
-                                        var ld = Vector3.TransformNormal(dir, inv);
-                                        if (RayAabb(lo, ld, -sh.Size * 0.5f, sh.Size * 0.5f, out float tbx)) Consider(tbx, null, o, o.DisplayName);
+                                case ShapeKind.Box: {
+                                        var m = LevelObject.RotationPYR(sh.Rotation) * Matrix4x4.CreateTranslation(sh.Center);
+                                        if (Matrix4x4.Invert(m, out var inv)) {
+                                            var lo = Vector3.Transform(origin, inv);
+                                            var ld = Vector3.TransformNormal(dir, inv);
+                                            if (RayAabb(lo, ld, -sh.Size * 0.5f, sh.Size * 0.5f, out float tbx)) Consider(tbx, null, o, o.DisplayName);
+                                        }
+                                        break;
                                     }
-                                    break;
-                                }
                                 default:
                                     foreach (var p in sh.Points)
                                         if (RaySphere(origin, dir, p, 50, out float tp)) Consider(tp, null, o, o.DisplayName);
@@ -797,22 +741,18 @@ namespace Mk2.Viewer.Rendering
             return best;
         }
 
-        private static bool RayAabb(Vector3 o, Vector3 d, Vector3 min, Vector3 max, out float t)
-        {
+        private static bool RayAabb(Vector3 o, Vector3 d, Vector3 min, Vector3 max, out float t) {
             float tmin = 0, tmax = float.MaxValue;
             t = 0;
-            for (int i = 0; i < 3; i++)
-            {
+            for (int i = 0; i < 3; i++) {
                 float oi = i == 0 ? o.X : i == 1 ? o.Y : o.Z;
                 float di = i == 0 ? d.X : i == 1 ? d.Y : d.Z;
                 float mn = i == 0 ? min.X : i == 1 ? min.Y : min.Z;
                 float mx = i == 0 ? max.X : i == 1 ? max.Y : max.Z;
-                if (MathF.Abs(di) < 1e-9f)
-                {
+                if (MathF.Abs(di) < 1e-9f) {
                     if (oi < mn || oi > mx) return false;
                 }
-                else
-                {
+                else {
                     float t1 = (mn - oi) / di, t2 = (mx - oi) / di;
                     if (t1 > t2) (t1, t2) = (t2, t1);
                     tmin = Math.Max(tmin, t1);
@@ -824,8 +764,7 @@ namespace Mk2.Viewer.Rendering
             return true;
         }
 
-        private static bool RayTri(Vector3 o, Vector3 d, Vector3 a, Vector3 b, Vector3 c, out float t)
-        {
+        private static bool RayTri(Vector3 o, Vector3 d, Vector3 a, Vector3 b, Vector3 c, out float t) {
             t = 0;
             var e1 = b - a; var e2 = c - a;
             var p = Vector3.Cross(d, e2);
@@ -842,8 +781,7 @@ namespace Mk2.Viewer.Rendering
             return t > 0;
         }
 
-        private static bool RaySphere(Vector3 o, Vector3 d, Vector3 c, float r, out float t)
-        {
+        private static bool RaySphere(Vector3 o, Vector3 d, Vector3 c, float r, out float t) {
             t = 0;
             var oc = o - c;
             float b = Vector3.Dot(oc, d);
@@ -857,8 +795,7 @@ namespace Mk2.Viewer.Rendering
         }
 
         /// <summary>Only hits when the camera is outside the sphere (so big trigger spheres don't swallow every click).</summary>
-        private static bool RaySphereShell(Vector3 o, Vector3 d, Vector3 c, float r, out float t)
-        {
+        private static bool RaySphereShell(Vector3 o, Vector3 d, Vector3 c, float r, out float t) {
             t = 0;
             if (Vector3.DistanceSquared(o, c) < r * r) return false;
             return RaySphere(o, d, c, r, out t);
@@ -866,15 +803,13 @@ namespace Mk2.Viewer.Rendering
 
         // ---------------------------------------------------------------- screenshots
 
-        public static byte[] ReadPixels(int w, int h)
-        {
+        public static byte[] ReadPixels(int w, int h) {
             var px = new byte[w * h * 4];
             GL.PixelStore(PixelStoreParameter.PackAlignment, 1);
             GL.ReadPixels(0, 0, w, h, PixelFormat.Rgba, PixelType.UnsignedByte, px);
             // flip rows (GL origin is bottom-left)
             var row = new byte[w * 4];
-            for (int y = 0; y < h / 2; y++)
-            {
+            for (int y = 0; y < h / 2; y++) {
                 System.Buffer.BlockCopy(px, y * w * 4, row, 0, w * 4);
                 System.Buffer.BlockCopy(px, (h - 1 - y) * w * 4, px, y * w * 4, w * 4);
                 System.Buffer.BlockCopy(row, 0, px, (h - 1 - y) * w * 4, w * 4);
@@ -882,11 +817,7 @@ namespace Mk2.Viewer.Rendering
             for (int i = 3; i < px.Length; i += 4) px[i] = 255;
             return px;
         }
-
-        // ---------------------------------------------------------------- cleanup
-
-        private void DisposeSceneResources()
-        {
+        private void DisposeSceneResources() {
             ClearAnimation();
             foreach (var m in _models.Values) m.Dispose();
             _models.Clear();
@@ -909,8 +840,7 @@ namespace Mk2.Viewer.Rendering
             Scene = null;
         }
 
-        public void Dispose()
-        {
+        public void Dispose() {
             DisposeSceneResources();
             _skeletonLines?.Dispose();
             _skeletonLines = null;

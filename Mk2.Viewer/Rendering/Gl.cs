@@ -10,10 +10,6 @@ namespace Mk2.Viewer.Rendering
     {
         private static readonly float[] _matBuf = new float[16];
 
-        /// <summary>
-        /// Uploads a System.Numerics matrix. Its row-major memory read as column-major by GLSL
-        /// gives the transpose, so shaders compute "M * v" which equals (v * M) on the CPU side.
-        /// </summary>
         public static void SetMatrix(int location, Matrix4x4 m)
         {
             if (location < 0) return;
@@ -24,8 +20,6 @@ namespace Mk2.Viewer.Rendering
             a[12] = m.M41; a[13] = m.M42; a[14] = m.M43; a[15] = m.M44;
             GL.UniformMatrix4(location, 1, false, a);
         }
-
-        /// <summary>OpenGL-style (-1..1 depth) right-handed perspective, row-vector convention.</summary>
         public static Matrix4x4 Perspective(float fovY, float aspect, float near, float far)
         {
             float f = 1f / MathF.Tan(fovY / 2f);
