@@ -19,7 +19,7 @@ using Mat4 = System.Numerics.Matrix4x4;
 
 namespace Mk2.Viewer
 {
-    public sealed class MainForm : Form
+    public sealed partial class MainForm : Form
     {
         // ---- data
         private GameData _game;
@@ -133,6 +133,9 @@ namespace Mk2.Viewer
             view.DropDownItems.Add(Toggle("Model collision components (c_*)", () => _vs.ModelCollisionComponents, v => _vs.ModelCollisionComponents = v));
             view.DropDownItems.Add(Toggle("Shatter fragments (f_*)", () => _vs.Fragments, v => _vs.Fragments = v));
             view.DropDownItems.Add(new ToolStripSeparator());
+            view.DropDownItems.Add(Toggle("Skeleton (Animations / Skeletons tabs)", () => _vs.Skeleton, v => _vs.Skeleton = v));
+            view.DropDownItems.Add(Toggle("Animated mesh", () => _vs.AnimatedMesh, v => _vs.AnimatedMesh = v));
+            view.DropDownItems.Add(new ToolStripSeparator());
             view.DropDownItems.Add(Toggle("Trigger / volume / path shapes", () => _vs.Shapes, v => _vs.Shapes = v));
             view.DropDownItems.Add(Toggle("Markers for objects without models", () => _vs.Markers, v => _vs.Markers = v));
             var cats = new ToolStripMenuItem("Object categories");
@@ -154,7 +157,7 @@ namespace Mk2.Viewer
             var help = new ToolStripMenuItem("&Help");
             help.DropDownItems.Add("Controls", null, (s, e) => MessageBox.Show(this, ControlsHelp, "Controls"));
             help.DropDownItems.Add("About file formats", null, (s, e) => MessageBox.Show(this,
-                "See FORMATS.md next to the solution for everything decoded so far:\nRKV2/BPK, BNI, MDL3/MDG3 (PS2 VIF), TEX, MIN, CGR, levels.ini and .lc3 layouts.", "Formats"));
+                "See FORMATS.md next to the solution for everything decoded so far:\nRKV2/BPK, BNI, MDL3/MDG3 (PS2 VIF), TEX, MIN, CGR, ANM3/ANG animations, BBI clip lists, levels.ini and .lc3 layouts.", "Formats"));
             menu.Items.Add(help);
 
             var tools = _tools = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
@@ -232,6 +235,8 @@ namespace Mk2.Viewer
             _leftTabs.TabPages.Add(scenePage);
             _leftTabs.TabPages.Add(packPage);
             _leftTabs.TabPages.Add(modelPage);
+            _leftTabs.TabPages.Add(BuildAnimationsPage());
+            _leftTabs.TabPages.Add(BuildSkeletonsPage());
 
             // ---- right panel
             _rightTabs = new TabControl { Dock = DockStyle.Fill };
@@ -285,7 +290,7 @@ namespace Mk2.Viewer
             _gl.MouseUp += GlMouseUp;
             _gl.MouseMove += GlMouseMove;
             _gl.MouseWheel += GlMouseWheel;
-            _gl.KeyDown += (s, e) => { _keys.Add(e.KeyCode); if (e.KeyCode == Keys.F) FocusSelection(); if (e.KeyCode == Keys.Escape) Select(null, null); e.Handled = true; };
+            _gl.KeyDown += (s, e) => { _keys.Add(e.KeyCode); if (e.KeyCode == Keys.F) FocusSelection(); if (e.KeyCode == Keys.Escape) Select(null, null); if (e.KeyCode == Keys.Space && _renderer.Anim != null) TogglePlay(); e.Handled = true; };
             _gl.KeyUp += (s, e) => _keys.Remove(e.KeyCode);
             _gl.LostFocus += (s, e) => _keys.Clear();
 
@@ -319,7 +324,8 @@ namespace Mk2.Viewer
             "Middle drag        pan\n" +
             "Left click         select object (or overlay)\n" +
             "F                  focus selection\n" +
-            "Esc                clear selection\n\n" +
+            "Esc                clear selection\n" +
+            "Space              play / pause the animation (Animations tab)\n\n" +
             "Scene tab: tick/untick chunks and categories, double-click an object to fly to it.";
 
         private ToolStripMenuItem Toggle(string text, Func<bool> get, Action<bool> set)
@@ -385,6 +391,7 @@ namespace Mk2.Viewer
                 _allModels = game.AllNames(".mdl").Select(Path.GetFileNameWithoutExtension).Distinct(StringComparer.OrdinalIgnoreCase)
                                  .OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
                 FillModelList();
+                FillAnimationLists();
                 ShowLevelInfo(null, null);
                 _rightTabs.SelectedIndex = 0;
                 SetStatus($"{root}: {_levels.Count} levels, {_packList.Items.Count} chunk packs, {_allModels.Count} models");
@@ -576,14 +583,14 @@ namespace Mk2.Viewer
             Redraw();
         }
 
-        private void ShowScene(LevelScene scene, Stopwatch sw)
+        private void ShowScene(LevelScene scene, Stopwatch sw, bool switchToSceneTab = true)
         {
             _scene = scene;
             if (_glReady) _gl.MakeCurrent();
             _renderer.Load(scene);
             _vs.ClearSceneVisibility();
             BuildSceneTree();
-            _leftTabs.SelectedIndex = 1;
+            if (switchToSceneTab) _leftTabs.SelectedIndex = 1;
             int tris = _renderer.Items.Sum(i => i.Model.Parts.Sum(p => p.Triangles));
             int objs = scene.AllObjects.Count();
             SetStatus($"{scene.Def.Name}: {scene.Chunks.Count} chunks, {objs} objects, {_renderer.Items.Count} draw items, {tris:N0} triangles, {_renderer.Collisions.Count} collision meshes — {sw.ElapsedMilliseconds} ms");
@@ -866,7 +873,7 @@ namespace Mk2.Viewer
                 sb.AppendLine($"  bounds {V(lm.Model.BoundsMin)} .. {V(lm.Model.BoundsMax)}");
                 sb.AppendLine("  components:");
                 foreach (var c in lm.Model.Components)
-                    sb.AppendLine($"    {c.Name}{(c.IsCollision ? "  [collision]" : c.IsFragment ? "  [fragment]" : "")}  meshes={c.Meshes.Count} bones={c.BoneCount}");
+                    sb.AppendLine($"    {c.Name}{(c.IsCollision ? "  [collision]" : c.IsFragment ? "  [fragment]" : "")}  meshes={c.Meshes.Count}{(c.RigidBone >= 0 ? $" bone={c.RigidBone}" : "")}{(c.Meshes.Any(x => x.Skinned) ? " skinned" : "")}");
                 sb.AppendLine("  materials:");
                 foreach (var m in lm.Materials)
                 {
@@ -1138,7 +1145,7 @@ namespace Mk2.Viewer
         private static bool AppIdle => PeekMessage(out _, IntPtr.Zero, 0, 0, 0) == 0;
 
         private bool NeedsContinuous =>
-            _keys.Count > 0 || _rmb || _mmb || _animate || _renderer.SelectedItem != null || _renderer.Selected != null;
+            _keys.Count > 0 || _rmb || _mmb || _animate || AnimationPlaying || _renderer.SelectedItem != null || _renderer.Selected != null;
 
         private void OnIdle(object sender, EventArgs e)
         {
@@ -1161,6 +1168,7 @@ namespace Mk2.Viewer
             _gl.MakeCurrent();
             try
             {
+                AnimationTick();
                 _renderer.Render(_cam, _gl.ClientSize.Width, _gl.ClientSize.Height, _vs, _clear, _fogColor, _fogRange);
             }
             catch (Exception ex)

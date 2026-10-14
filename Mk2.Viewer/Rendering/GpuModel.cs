@@ -20,6 +20,18 @@ namespace Mk2.Viewer.Rendering
         public int Triangles;
         public bool Transparent => Material.Blend != BlendMode.Opaque || (TextureHasAlpha && !Material.AlphaTest && !TextureIsCutout);
         public bool TextureIsCutout;
+        /// <summary>Bind-pose copy of the vertices for CPU skinning (only on models built as animatable).</summary>
+        public SkinSource Skin;
+    }
+
+    /// <summary>Per-vertex bind pose + bone data for one part, and the interleaved buffer it is skinned into.</summary>
+    public sealed class SkinSource
+    {
+        public Vector3[] Positions, Normals;
+        public short[] Bone0, Bone1;   // -1 = vertex isn't skinned (follows RigidBone, or stays put)
+        public float[] Weight0;
+        public int RigidBone = -1;     // component's rigid bone
+        public float[] Data;           // interleaved buffer (positions/normals rewritten every pose)
     }
 
     /// <summary>GPU copy of a model: one part per (component, material).</summary>
@@ -30,9 +42,12 @@ namespace Mk2.Viewer.Rendering
         public Vector3 Min, Max;           // local bounds of visible geometry
         public bool HasBounds;
 
-        public static GpuModel Build(LoadedModel lm, TextureCache textures)
+        /// <summary>True when built with skin data (see <see cref="ApplySkin"/>).</summary>
+        public bool Animatable;
+
+        public static GpuModel Build(LoadedModel lm, TextureCache textures, bool animatable = false)
         {
-            var g = new GpuModel { Source = lm };
+            var g = new GpuModel { Source = lm, Animatable = animatable };
             var model = lm.Model;
             var min = new Vector3(float.MaxValue);
             var max = new Vector3(float.MinValue);
@@ -62,10 +77,34 @@ namespace Mk2.Viewer.Rendering
                         max = Vector3.Max(max, v.Position);
                     }
                 }
+                SkinSource skin = null;
+                if (animatable)
+                {
+                    var skinned = new HashSet<ModelVertex>();
+                    foreach (var mesh in grp)
+                        if (mesh.Skinned) foreach (var st in mesh.Strips) foreach (var v in st.Vertices) skinned.Add(v);
+                    skin = new SkinSource
+                    {
+                        Positions = new Vector3[verts.Count], Normals = new Vector3[verts.Count],
+                        Bone0 = new short[verts.Count], Bone1 = new short[verts.Count], Weight0 = new float[verts.Count],
+                        RigidBone = comp.RigidBone, Data = data,
+                    };
+                    for (int i = 0; i < verts.Count; i++)
+                    {
+                        var v = verts[i];
+                        skin.Positions[i] = v.Position;
+                        skin.Normals[i] = new Vector3(data[i * GpuMesh.Stride + 3], data[i * GpuMesh.Stride + 4], data[i * GpuMesh.Stride + 5]);
+                        bool sk = skinned.Contains(v);
+                        skin.Bone0[i] = sk ? v.Bone0 : (short)-1;
+                        skin.Bone1[i] = sk ? v.Bone1 : (short)-1;
+                        skin.Weight0[i] = v.Weight0;
+                    }
+                }
                 var tex = textures.Get(mat.TextureName);
                 var part = new GpuPart
                 {
-                    Mesh = GpuMesh.Create(data, idx.Select(i => (uint)i).ToArray()),
+                    Mesh = GpuMesh.Create(data, idx.Select(i => (uint)i).ToArray(), dynamic: animatable),
+                    Skin = skin,
                     Material = mat,
                     Texture = tex.Id,
                     TextureHasAlpha = tex.HasAlpha,
@@ -80,6 +119,63 @@ namespace Mk2.Viewer.Rendering
             if (min.X <= max.X) { g.Min = min; g.Max = max; g.HasBounds = true; }
             else { g.Min = model.BoundsMin; g.Max = model.BoundsMax; g.HasBounds = true; }
             return g;
+        }
+
+        /// <summary>
+        /// Poses the model on the CPU with skinning matrices (bind pose → posed, model space, row vectors)
+        /// and re-uploads the vertex buffers. Skinned vertices blend two bones; other vertices follow their
+        /// component's rigid bone, or stay in place. Updates Min/Max to the posed bounds.
+        /// </summary>
+        public void ApplySkin(Matrix4x4[] skin)
+        {
+            if (!Animatable || skin == null) return;
+            var min = new Vector3(float.MaxValue);
+            var max = new Vector3(float.MinValue);
+            int nb = skin.Length;
+            foreach (var p in Parts)
+            {
+                var s = p.Skin;
+                if (s == null) continue;
+                var d = s.Data;
+                bool rigid = s.RigidBone >= 0 && s.RigidBone < nb;
+                for (int i = 0; i < s.Positions.Length; i++)
+                {
+                    Vector3 pos, nrm;
+                    int b0 = s.Bone0[i];
+                    if (b0 >= 0 && b0 < nb)
+                    {
+                        int b1 = s.Bone1[i];
+                        if (b1 < 0 || b1 >= nb) b1 = b0;
+                        float w = s.Weight0[i];
+                        ref var m0 = ref skin[b0];
+                        ref var m1 = ref skin[b1];
+                        pos = Vector3.Transform(s.Positions[i], m0) * w + Vector3.Transform(s.Positions[i], m1) * (1f - w);
+                        nrm = Vector3.TransformNormal(s.Normals[i], m0) * w + Vector3.TransformNormal(s.Normals[i], m1) * (1f - w);
+                    }
+                    else if (rigid)
+                    {
+                        pos = Vector3.Transform(s.Positions[i], skin[s.RigidBone]);
+                        nrm = Vector3.TransformNormal(s.Normals[i], skin[s.RigidBone]);
+                    }
+                    else
+                    {
+                        pos = s.Positions[i];
+                        nrm = s.Normals[i];
+                    }
+                    float l = nrm.Length();
+                    nrm = l > 1e-6f ? nrm / l : Vector3.UnitY;
+                    int o = i * GpuMesh.Stride;
+                    d[o] = pos.X; d[o + 1] = pos.Y; d[o + 2] = pos.Z;
+                    d[o + 3] = nrm.X; d[o + 4] = nrm.Y; d[o + 5] = nrm.Z;
+                    if (!p.IsCollisionComponent)
+                    {
+                        min = Vector3.Min(min, pos);
+                        max = Vector3.Max(max, pos);
+                    }
+                }
+                p.Mesh.UpdateVertices(d);
+            }
+            if (min.X <= max.X) { Min = min; Max = max; }
         }
 
         public void Dispose()

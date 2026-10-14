@@ -42,7 +42,7 @@ namespace Mk2.Viewer.Rendering
     }
 
     /// <summary>Owns all GPU resources for one loaded scene and draws it.</summary>
-    public sealed class SceneRenderer : IDisposable
+    public sealed partial class SceneRenderer : IDisposable
     {
         public LevelScene Scene { get; private set; }
         public readonly List<DrawItem> Items = new List<DrawItem>();
@@ -397,6 +397,7 @@ namespace Mk2.Viewer.Rendering
 
         public bool Visible(DrawItem it, ViewSettings s)
         {
+            if (Anim != null && Anim.Item == it && !s.AnimatedMesh) return false;
             string ch = it.Chunk.Def.Name;
             switch (it.Kind)
             {
@@ -579,6 +580,7 @@ namespace Mk2.Viewer.Rendering
                 _mesh.Set("uFog", s.Fog);
                 _lines.Use();
             }
+            DrawSkeleton(s);
             if (_selectionLines != null)
             {
                 GL.Disable(EnableCap.DepthTest);
@@ -885,6 +887,7 @@ namespace Mk2.Viewer.Rendering
 
         private void DisposeSceneResources()
         {
+            ClearAnimation();
             foreach (var m in _models.Values) m.Dispose();
             _models.Clear();
             _pickTris.Clear();
@@ -909,6 +912,8 @@ namespace Mk2.Viewer.Rendering
         public void Dispose()
         {
             DisposeSceneResources();
+            _skeletonLines?.Dispose();
+            _skeletonLines = null;
             _gridLines?.Dispose();
             _mesh?.Dispose();
             _lines?.Dispose();
