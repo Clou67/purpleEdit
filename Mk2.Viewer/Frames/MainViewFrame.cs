@@ -32,7 +32,7 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
                 ImGui.Image(new ImTextureRef(default, (ulong)(uint)renderTarget.ColorTexture), new Vec2(width, height), new Vec2(0, 1), new Vec2(1, 0));
             }
             bool hovered = ImGui.IsItemHovered();
-            DrawCameraReadout(origin);
+            if (owner.ViewSettings.CameraInfo) DrawCameraReadout(origin);
             HandleInput(hovered, origin, width, height);
         }
 

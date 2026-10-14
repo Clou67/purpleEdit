@@ -32,6 +32,9 @@ namespace Mk2.Viewer.ImGuiUi.Frames
             ImGui.Checkbox("Fog", ref settings.Fog);
             ImGui.SliderFloat("Brightness", ref settings.Brightness, 1.0f, 2.0f);
 
+            ImGui.SeparatorText("Display");
+            ImGui.Checkbox("Camera info", ref settings.CameraInfo);
+
             ImGui.SeparatorText("Volumes");
             foreach (var category in ViewSettings.VolumeCategories)
             {

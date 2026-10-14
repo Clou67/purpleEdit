@@ -504,13 +504,17 @@ namespace Mk2.Viewer.Rendering {
             }
             CheckGl("Collision pass");
 
-            // 4. Transparent geometry (no sorting; depth writes off).
+            // 4. Transparent geometry (no sorting; depth writes off), then the depth of its mostly solid pixels
+            //    so that lines behind it stay hidden.
             if (s.Transparency) {
                 GL.Enable(EnableCap.Blend);
                 GL.DepthMask(false);
                 foreach (var it in _visible) DrawModel(it, it.World, s, time, pass: 1);
                 GL.DepthMask(true);
                 GL.Disable(EnableCap.Blend);
+                GL.ColorMask(false, false, false, false);
+                foreach (var it in _visible) DrawModel(it, it.World, s, time, pass: 2);
+                GL.ColorMask(true, true, true, true);
             }
             CheckGl("Transparent pass");
 
@@ -561,7 +565,6 @@ namespace Mk2.Viewer.Rendering {
             GL.BindVertexArray(0);
         }
 
-        /// <summary>pass 0 = opaque/alpha-test parts, pass 1 = blended parts.</summary>
         private void DrawSelectionHighlight(DrawItem it, ViewSettings s) {
             float pulse = 0.5f + 0.5f * MathF.Sin((float)(DateTime.Now - _start).TotalSeconds * 4f);
             _mesh.Use();
@@ -617,6 +620,7 @@ namespace Mk2.Viewer.Rendering {
             if (s.CullBackfaces) GL.Enable(EnableCap.CullFace);
         }
 
+        /// <summary>pass 0 = opaque and alpha-tested parts, 1 = blended parts, 2 = depth only for blended parts that look solid.</summary>
         private void DrawModel(DrawItem item, Matrix4x4 world, ViewSettings s, float time, int pass, bool forceNoFog = false) {
             var m = item.Model;
             bool prelit = item.Kind != ItemKind.Object && s.VertexColors;
@@ -625,7 +629,8 @@ namespace Mk2.Viewer.Rendering {
                 if (p.IsCollisionComponent && !s.ModelCollisionComponents) continue;
                 if (p.IsFragment && !s.Fragments) continue;
                 bool transparent = s.Transparency && p.Transparent;
-                if ((pass == 1) != transparent) continue;
+                if ((pass >= 1) != transparent) continue;
+                if (pass == 2 && !p.WritesDepthWhenBlended) continue;
                 if (!modelSet) {
                     _mesh.Set("uModel", world);
                     modelSet = true;
@@ -638,7 +643,8 @@ namespace Mk2.Viewer.Rendering {
                 float aref = 0f;
                 if (useTex && (mat.AlphaTest || p.TextureIsCutout || (p.TextureHasAlpha && !transparent)))
                     aref = mat.AlphaRef > 0 ? mat.AlphaRef : 0.5f;
-                if (pass == 1) aref = 0.01f;
+                if (pass == 1) aref = p.TextureAdditive ? 0f : 0.01f;
+                if (pass == 2) aref = 0.5f;
                 _mesh.Set("uAlphaRef", aref);
                 var tint = p.IsCollisionComponent ? new Vector4(0.4f, 1f, 0.4f, 1f) : item.Tint;
                 _mesh.Set("uTint", tint);
@@ -646,7 +652,8 @@ namespace Mk2.Viewer.Rendering {
                 _mesh.Set("uUVOffset", off);
                 if (forceNoFog) _mesh.Set("uFog", false);
                 if (pass == 1) {
-                    if (mat.Blend == BlendMode.Additive) GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.One);
+                    if (p.TextureAdditive) GL.BlendFunc(BlendingFactor.One, BlendingFactor.One);
+                    else if (mat.Blend == BlendMode.Additive) GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.One);
                     else if (mat.Blend == BlendMode.Subtractive) {
                         GL.BlendEquation(BlendEquationMode.FuncReverseSubtract);
                         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.One);

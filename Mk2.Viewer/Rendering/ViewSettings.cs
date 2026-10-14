@@ -17,7 +17,9 @@ namespace Mk2.Viewer.Rendering
         public bool Lighting = false;
         public bool Transparency = true;
         public bool Fog = true;
-        public float Brightness = 1.6f;
+        public float Brightness = 1.2f;
+
+        public bool CameraInfo = true;
 
         public bool Wireframe = false;
         public bool CullBackfaces = false;
