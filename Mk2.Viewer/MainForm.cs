@@ -576,7 +576,7 @@ namespace Mk2.Viewer
                 return sc;
             });
             ShowScene(scene, sw);
-            FrameWorld(_renderer.SceneMin, _renderer.SceneMax);
+            FrameWorld(_renderer.SceneMin, _renderer.SceneMax, fromFront: true);
             UpdateSpeedLabel();
             var it = _renderer.Items.FirstOrDefault();
             if (it != null) Select(it.Object, it);
