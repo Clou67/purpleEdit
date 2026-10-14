@@ -278,7 +278,7 @@ namespace Mk2.Viewer
                 if (_glReady) _gl.MakeCurrent();
                 var item = _renderer.Items.FirstOrDefault(i => i.Kind == ItemKind.Object);
                 _renderer.SetAnimation(item, _anim);
-                FrameWorld(_renderer.SceneMin, _renderer.SceneMax);
+                FrameWorld(_renderer.SceneMin, _renderer.SceneMax, fromFront: true);
                 UpdateSpeedLabel();
 
                 _animModelLabel.Text = "Model: " + (r.model ?? "(none — skeleton only)");

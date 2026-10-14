@@ -1041,7 +1041,7 @@ namespace Mk2.Viewer
         private static string V(Vec3 v) => $"{v.X:0.###} {v.Y:0.###} {v.Z:0.###}";
 
         /// <summary>Frame a box given in game (world) coordinates; the camera lives in display space, which is X-mirrored when MirrorX is on.</summary>
-        private void FrameWorld(Vec3 min, Vec3 max)
+        private void FrameWorld(Vec3 min, Vec3 max, bool fromFront = false)
         {
             if (_vs.MirrorX)
             {
@@ -1049,7 +1049,7 @@ namespace Mk2.Viewer
                 var b = new Vec3(-min.X, max.Y, max.Z);
                 min = a; max = b;
             }
-            _cam.Frame(min, max);
+            _cam.Frame(min, max, fromFront);
         }
 
         private Vec3 CamWorldPosition => _vs.MirrorX ? _cam.Position * new Vec3(-1, 1, 1) : _cam.Position;

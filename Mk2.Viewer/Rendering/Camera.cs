@@ -36,12 +36,15 @@ namespace Mk2.Viewer.Rendering
             Yaw = MathF.Atan2(d.X, -d.Z);
         }
 
-        /// <summary>Frame an axis-aligned box from a pleasant angle.</summary>
-        public void Frame(Vector3 min, Vector3 max)
+        /// <summary>
+        /// Frame an axis-aligned box from a pleasant angle. <paramref name="fromFront"/> views it from the −Z side:
+        /// characters and animated props face −Z, so the default (+Z) angle would show their backs.
+        /// </summary>
+        public void Frame(Vector3 min, Vector3 max, bool fromFront = false)
         {
             var c = (min + max) * 0.5f;
             float r = Math.Max((max - min).Length() * 0.5f, 100f);
-            var dir = Vector3.Normalize(new Vector3(0.6f, 0.55f, 0.6f));
+            var dir = Vector3.Normalize(fromFront ? new Vector3(0.55f, 0.35f, -0.75f) : new Vector3(0.6f, 0.55f, 0.6f));
             LookAt(c + dir * r * 1.6f, c);
             Speed = Math.Clamp(r * 0.6f, 500f, 40000f);
             Far = Math.Max(600000f, r * 8f);
