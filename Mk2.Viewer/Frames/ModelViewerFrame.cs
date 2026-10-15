@@ -106,10 +106,12 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
         }
 
         private void RenderBoneTree() {
-            foreach (var bone in animation.Bones.Where(candidate => candidate.Parent < 0)) RenderBone(bone);
+            var shownAnimation = animation;
+            if (shownAnimation == null) return;
+            foreach (var bone in shownAnimation.Bones.Where(candidate => candidate.Parent < 0)) RenderBone(shownAnimation, bone);
         }
 
-        private void RenderBone(AnimBone bone) {
+        private void RenderBone(Animation shownAnimation, AnimBone bone) {
             var flags = ImGuiTreeNodeFlags.SpanAvailWidth | ImGuiTreeNodeFlags.OpenOnArrow | ImGuiTreeNodeFlags.DefaultOpen;
             if (bone.Children.Count == 0) flags |= ImGuiTreeNodeFlags.Leaf;
             if (renderer.Anim?.SelectedBone == bone.Index) flags |= ImGuiTreeNodeFlags.Selected;
@@ -118,7 +120,7 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
             if (!bone.IsAnimated) ImGui.PopStyleColor();
             if (ImGui.IsItemClicked() && !ImGui.IsItemToggledOpen()) SelectBone(bone.Index);
             if (!open) return;
-            foreach (int child in bone.Children) RenderBone(animation.Bones[child]);
+            foreach (int child in bone.Children) RenderBone(shownAnimation, shownAnimation.Bones[child]);
             ImGui.TreePop();
         }
 
@@ -280,7 +282,7 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
                 }
             }
             lastAnimationTick = now;
-            float frame = clip == null ? -1 : Math.Min(animationFrame, Math.Max(0, animation.FrameCount - 1));
+            float frame = clip == null ? -1 : Math.Min(animationFrame, Math.Max(0, renderer.Anim.Anim.FrameCount - 1));
             renderer.SetPose(frame);
         }
 

@@ -179,7 +179,7 @@ ANG3: a 0x10-byte header (`ANG3`, then zeros), then 8-byte transforms of `s16 x,
 Pose (checked against Spyro's walk and run cycles, the dragon door and Sparx):
 * Local translation = `bindPosition − parent.bindPosition + key.position`. Key positions are offsets from the bind pose, so rotation-only bones keep their bind offset.
 * With row vectors: `local = Scale · R · Translate`, where **R = `CreateFromQuaternion(conjugate(q))`**. The game's matrices are the transpose of the usual right-handed ones; using `q` directly bends knees and wings the wrong way.
-* `global = local · parent.global`, and `skin = Translate(−bindPosition) · global` (the bind pose has no rotation).
+* Scale is not inherited: `rigid = R · Translate · parent.rigid`, `global = Scale · rigid`, and `skin = Translate(−bindPosition) · global` (the bind pose has no rotation). Spyro's brow rig scales parents by about 1.5, which would otherwise push the brows upwards.
 * Skinned vertex: `w0 · (v · skin[bone0]) + (1 − w0) · (v · skin[bone1])`. Rigid component: `v · skin[rigidBone]`.
 * Keys are linearly interpolated (nlerp for rotations). 30 frames per second matches the clip lengths **(?)**.
 

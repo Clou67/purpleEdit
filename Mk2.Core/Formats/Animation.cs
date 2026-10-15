@@ -251,22 +251,29 @@ namespace Mk2.Formats
             rotation = Quaternion.Normalize(Quaternion.Lerp(previous.Rotation, nextRotation, blend));
         }
 
-        /// <summary>Model-space bone matrices (row vectors) at a frame. <paramref name="frame"/> &lt; 0 gives the bind pose.</summary>
+        /// <summary>
+        /// Model-space bone matrices (row vectors) at a frame. <paramref name="frame"/> &lt; 0 gives the bind pose.
+        /// A bone's scale only applies to its own vertices; its children hang off its unscaled frame.
+        /// </summary>
+        private Matrix4x4[] unscaledGlobals = Array.Empty<Matrix4x4>();
+
         public void ComputePose(float frame, Matrix4x4[] globals)
         {
+            if (unscaledGlobals.Length != Bones.Count) unscaledGlobals = new Matrix4x4[Bones.Count];
             foreach (int boneIndex in EvalOrder)
             {
                 var bone = Bones[boneIndex];
-                Matrix4x4 local;
-                if (frame < 0) local = Matrix4x4.CreateTranslation(bone.LocalOffset);
+                Matrix4x4 rigid;
+                var scale = Vector3.One;
+                if (frame < 0) rigid = Matrix4x4.CreateTranslation(bone.LocalOffset);
                 else
                 {
-                    SampleLocal(bone, frame, out var translation, out var rotation, out var scale);
-                    local = Matrix4x4.CreateScale(scale)
-                          * Matrix4x4.CreateFromQuaternion(Quaternion.Conjugate(rotation))
-                          * Matrix4x4.CreateTranslation(translation);
+                    SampleLocal(bone, frame, out var translation, out var rotation, out scale);
+                    rigid = Matrix4x4.CreateFromQuaternion(Quaternion.Conjugate(rotation)) * Matrix4x4.CreateTranslation(translation);
                 }
-                globals[boneIndex] = bone.Parent >= 0 ? local * globals[bone.Parent] : local;
+                var parentFrame = bone.Parent < 0 ? Matrix4x4.Identity : unscaledGlobals[bone.Parent];
+                unscaledGlobals[boneIndex] = rigid * parentFrame;
+                globals[boneIndex] = Matrix4x4.CreateScale(scale) * unscaledGlobals[boneIndex];
             }
         }
 
