@@ -57,7 +57,7 @@ namespace Mk2.Viewer {
                 Flags = ContextFlags.ForwardCompatible,
                 Profile = ContextProfile.Core,
                 Vsync = VSyncMode.On,
-                Title = "purpleEdit v1.10",
+                Title = "purpleEdit v2.00",
             }) {
             this.arguments = arguments;
         }
