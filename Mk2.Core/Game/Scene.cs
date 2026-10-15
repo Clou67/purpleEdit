@@ -145,8 +145,6 @@ namespace Mk2.Game
                 catch (Exception exception) { Warnings.Add($"{name}.bbi: {exception.Message}"); clips = null; }
             }
             if ((clips == null || clips.Clips.Count == 0) && anim != null) clips = AnimSet.WholeTimeline(anim);
-            var bindPose = clips?.Clips.FirstOrDefault(clip => clip.Name.Contains("bindpose", StringComparison.OrdinalIgnoreCase));
-            if (bindPose != null && anim != null) anim.SetReferenceFrame(bindPose.End);
             animSets[name] = clips;
             return clips;
         }

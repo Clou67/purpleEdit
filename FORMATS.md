@@ -123,7 +123,7 @@ UNPACK V3-32 @2           positions (float)
 UNPACK V3-8  @3           normals (s8 / 127)                       — static
        V4-8  @3           normal xyz + bone0·2                      — skinned
 UNPACK V2-16 @4           uv (s16 / 4096)                           — static
-       V4-16 @4           u, v, weight0·4096, bone1·4               — skinned (weight1 = 1 − weight0)
+       V4-16 @4           u, v, weight1·4096, bone1·4               — skinned (weight0 = 1 − weight1)
 UNPACK V4-8  @5           RGBA prelit colour (0x80 = 1.0)
 MSCAL
 ```
@@ -179,7 +179,7 @@ ANG3: a 0x10-byte header (`ANG3`, then zeros), then 8-byte transforms of `s16 x,
 Pose (checked against Spyro's walk and run cycles, the dragon door and Sparx):
 * Local translation = `bindPosition − parent.bindPosition + key.position`. Key positions are offsets from the bind pose, so rotation-only bones keep their bind offset.
 * With row vectors: `local = Scale · R · Translate`, where **R = `CreateFromQuaternion(conjugate(q))`**. The game's matrices are the transpose of the usual right-handed ones; using `q` directly bends knees and wings the wrong way.
-* `global = local · parent.global`, and `skin = inverse(reference) · global`. The reference is the pose at the end of the `.bbi` clip named `Bindpose` (frame 1 for Spyro), or `Translate(bindPosition)` when there isn't one. Spyro's face rig is only at rest once frame 1's brow keys are applied (scales of about 1.5 on the brow parents); measuring from the bare bone positions pushes the brows far above the head.
+* `global = local · parent.global`, and `skin = Translate(−bindPosition) · global`. Spyro's brow rig scales its parents by about 1.5 on Y in every clip, so a wrong vertex weight on a forehead vertex shows up as brows stretching above the head.
 * Skinned vertex: `w0 · (v · skin[bone0]) + (1 − w0) · (v · skin[bone1])`. Rigid component: `v · skin[rigidBone]`.
 * Keys are linearly interpolated (nlerp for rotations). 30 frames per second matches the clip lengths **(?)**.
 

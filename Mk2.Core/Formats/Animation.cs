@@ -254,7 +254,6 @@ namespace Mk2.Formats
         /// <summary>Model-space bone matrices (row vectors) at a frame. <paramref name="frame"/> &lt; 0 gives the bind (reference) pose.</summary>
         public void ComputePose(float frame, Matrix4x4[] globals)
         {
-            if (frame < 0 && referenceFrame >= 0) frame = referenceFrame;
             foreach (int boneIndex in EvalOrder)
             {
                 var bone = Bones[boneIndex];
@@ -271,35 +270,11 @@ namespace Mk2.Formats
             }
         }
 
-        private Matrix4x4[] inverseReference;
-        private float referenceFrame = -1;
-
-        /// <summary>
-        /// The pose the mesh was modelled in. Face rigs (Spyro's brows) are only at rest once their setup keys are
-        /// applied, so skinning is measured from this frame instead of the bare bone positions.
-        /// </summary>
-        public void SetReferenceFrame(float frame)
-        {
-            referenceFrame = -1;
-            var reference = new Matrix4x4[Bones.Count];
-            ComputePose(frame, reference);
-            referenceFrame = frame;
-            inverseReference = new Matrix4x4[Bones.Count];
-            for (int boneIndex = 0; boneIndex < Bones.Count; boneIndex++)
-                if (!Matrix4x4.Invert(reference[boneIndex], out inverseReference[boneIndex]))
-                    inverseReference[boneIndex] = Matrix4x4.CreateTranslation(-Bones[boneIndex].BindPosition);
-        }
-
-        /// <summary>Converts model-space bone matrices into skinning matrices (reference pose → posed).</summary>
+        /// <summary>Converts model-space bone matrices into skinning matrices (bind pose → posed).</summary>
         public void SkinMatrices(Matrix4x4[] globals, Matrix4x4[] skin)
         {
             for (int boneIndex = 0; boneIndex < Bones.Count; boneIndex++)
-            {
-                var fromReference = inverseReference != null
-                    ? inverseReference[boneIndex]
-                    : Matrix4x4.CreateTranslation(-Bones[boneIndex].BindPosition);
-                skin[boneIndex] = fromReference * globals[boneIndex];
-            }
+                skin[boneIndex] = Matrix4x4.CreateTranslation(-Bones[boneIndex].BindPosition) * globals[boneIndex];
         }
 
         /// <summary>"z_A002_Head" → "A002": the actor code cutscene animations use to name their target's bones.</summary>

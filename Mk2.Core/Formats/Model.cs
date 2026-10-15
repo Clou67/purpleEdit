@@ -359,11 +359,11 @@ namespace Mk2.Formats
                         int offset = uv.at + index * 4;
                         vertex.UV = new Vector2(guts.S16(offset), guts.S16(offset + 2)) / 4096f;
                     }
-                    else if (uv.cmd == 0x6D)    // V4-16 : uv, weight, bone1<<2
+                    else if (uv.cmd == 0x6D)    // V4-16 : uv, bone1 weight, bone1<<2
                     {
                         int offset = uv.at + index * 8;
                         vertex.UV = new Vector2(guts.S16(offset), guts.S16(offset + 2)) / 4096f;
-                        vertex.Weight0 = Math.Clamp(guts.S16(offset + 4) / 4096f, 0f, 1f);
+                        vertex.Weight0 = 1f - Math.Clamp(guts.S16(offset + 4) / 4096f, 0f, 1f);
                         vertex.Node1 = vertex.Bone1 = (byte)(guts.U16(offset + 6) >> 2);
                     }
                 }
