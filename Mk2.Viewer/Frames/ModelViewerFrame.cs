@@ -249,9 +249,9 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
 
             var io = ImGui.GetIO();
             var mouse = io.MousePos;
-            if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Right)) rightDragging = true;
+            if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Right)) { rightDragging = true; MainViewFrame.LockCursor(owner.Viewer, true); }
             if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Middle)) middleDragging = true;
-            if (ImGui.IsMouseReleased(ImGuiMouseButton.Right)) rightDragging = false;
+            if (rightDragging && ImGui.IsMouseReleased(ImGuiMouseButton.Right)) { rightDragging = false; MainViewFrame.LockCursor(owner.Viewer, false); }
             if (ImGui.IsMouseReleased(ImGuiMouseButton.Middle)) middleDragging = false;
 
             float deltaX = mouse.X - lastMouse.X, deltaY = mouse.Y - lastMouse.Y;

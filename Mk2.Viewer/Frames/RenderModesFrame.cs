@@ -27,15 +27,12 @@ namespace Mk2.Viewer.ImGuiUi.Frames
             ImGui.SeparatorText("Lighting");
             ImGui.Checkbox("Textures", ref settings.Textures);
             ImGui.Checkbox("Vertex colors", ref settings.VertexColors);
-            ImGui.Checkbox("Directional lighting", ref settings.Lighting);
             ImGui.Checkbox("Transparency", ref settings.Transparency);
             ImGui.Checkbox("Fog", ref settings.Fog);
             ImGui.SliderFloat("Brightness", ref settings.Brightness, 1.0f, 2.0f);
 
             ImGui.SeparatorText("Display");
             ImGui.Checkbox("Camera info", ref settings.CameraInfo);
-            string distanceLabel = settings.DrawDistance >= ViewSettings.UnlimitedDrawDistance ? "Unlimited" : "%.0f";
-            ImGui.SliderFloat("Draw distance", ref settings.DrawDistance, 2000f, ViewSettings.UnlimitedDrawDistance, distanceLabel, ImGuiSliderFlags.Logarithmic);
 
             ImGui.SeparatorText("Volumes");
             foreach (var category in ViewSettings.VolumeCategories)

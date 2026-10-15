@@ -225,7 +225,15 @@ namespace Mk2.Formats
 
         private static void RemapBones(Model model, ModelMesh mesh)
         {
-            if (!mesh.Skinned || mesh.AnimNodeList == 0xFFFF) return;
+            if (!mesh.Skinned) return;
+            if (mesh.AnimNodeList == 0xFFFF)
+            {
+                // Skinned strips without a node list (weapons, helmets) follow the component's rigid bone.
+                if (model.Components[mesh.ComponentIndex].RigidBone < 0) return;
+                foreach (var strip in mesh.Strips)
+                    foreach (var vertex in strip.Vertices) vertex.Bone0 = vertex.Bone1 = NoBone;
+                return;
+            }
             if (mesh.AnimNodeList >= model.AnimNodeLists.Count)
             {
                 model.Warnings.Add($"mesh @0x{mesh.MdgOffset:X}: anim node list {mesh.AnimNodeList} out of range");

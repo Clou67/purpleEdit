@@ -129,7 +129,7 @@ MSCAL
 ```
 Each batch is a plain triangle strip (no restart flags). Skinned vertices are stored in bind pose, model space. When the mesh's anim node list isn't 0xFFFF, a vertex's bone value is a node index into that list: **bone = list[1 + node]** (the first byte is the list's length).
 
-Components whose meshes aren't skinned follow their **rigid bone** (component +0x3A) instead. The dragon door is built this way: its leaves and the dragon heads ride bones `z_LDoor` / `z_RDoor`, and the arch rides `C_CollisionArch`.
+Components whose meshes aren't skinned follow their **rigid bone** (component +0x3A) instead. So do skinned strips whose mesh has no anim node list (0xFFFF): Gaul's weapons, staff and helmet plate are built this way. The dragon door is built this way: its leaves and the dragon heads ride bones `z_LDoor` / `z_RDoor`, and the arch rides `C_CollisionArch`.
 
 ## ANM3 + ANG3 animations
 
@@ -156,7 +156,8 @@ Bone (0x20 bytes):
 | 0x0C | u32 | runtime pointer (garbage on disk) |
 | 0x10 | u32 | name offset |
 | 0x14 | u16 | key count |
-| 0x16 | u16 | parent bone (0xFF = root) |
+| 0x16 | u8 | parent bone (0xFF = root) |
+| 0x17 | u8 | transform pool: the bone's ANG indices start at pool × (transform count in the ANG info block) |
 | 0x18 | u32 | key offset |
 | 0x1C | u16 | 0 |
 | 0x1E | u16 | key type (below) |
@@ -168,6 +169,8 @@ Keys are sorted by frame. Usually the first key is on frame 0 and the last is on
 | 0 | 8 | `u16 frame, u16 position, u16 rotation, u16 scale`: three indices into the ANG |
 | 1 | 4 | `u16 frame, u16 rotation`: rotation-only, index into the ANG |
 | 2 | 8 | `u16 frame, s16 qx, qy, qz`: rotation-only, inline. Divide by 16384; `w = sqrt(1 − x² − y² − z²)` |
+
+Large animations overflow the u16 indices. The ANG then holds several pools of transforms back to back, each the size given in the ANM3 info block (65210 in `A001_Spyro_SYNKER`), and each pool starts with the same zero / identity / unit-scale entries. A bone's pool comes from its descriptor byte 0x17.
 
 ANG3: a 0x10-byte header (`ANG3`, then zeros), then 8-byte transforms of `s16 x, y, z, w`. Some files have a few bytes of padding after the last transform.
 * **Rotation**: quaternion `(x, y, z, w) / 16384`. Index 1 is usually identity `(0, 0, 0, 0x3FFF)`.

@@ -380,12 +380,6 @@ namespace Mk2.Viewer.Rendering {
 
         private static float DistanceSquared(Vector3 eye, DrawItem item) => Vector3.DistanceSquared(eye, (item.WorldMin + item.WorldMax) * 0.5f);
 
-        private static bool WithinDrawDistance(Vector3 eye, Vector3 min, Vector3 max, ViewSettings settings) {
-            if (settings.DrawDistance >= ViewSettings.UnlimitedDrawDistance) return true;
-            var nearest = Vector3.Clamp(eye, min, max);
-            return Vector3.DistanceSquared(eye, nearest) <= settings.DrawDistance * settings.DrawDistance;
-        }
-
         private void ExtractFrustum(Matrix4x4 viewProjection) {
             var column1 = new Vector4(viewProjection.M11, viewProjection.M21, viewProjection.M31, viewProjection.M41);
             var column2 = new Vector4(viewProjection.M12, viewProjection.M22, viewProjection.M32, viewProjection.M42);
@@ -422,8 +416,12 @@ namespace Mk2.Viewer.Rendering {
             InitGl();
             CheckGl("InitGl");
             GL.Viewport(0, 0, Math.Max(width, 1), Math.Max(height, 1));
+            GL.ColorMask(true, true, true, true);
             GL.ClearColor(clearColor.X, clearColor.Y, clearColor.Z, 1);
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+            // The frame is shown through ImGui with alpha blending, so blended and subtracted geometry must not
+            // change the frame's alpha or those pixels turn see-through (black squares, thin holes at faded edges).
+            GL.ColorMask(true, true, true, false);
             LastDrawnTriangles = 0;
 
             var mirror = settings.MirrorX ? Matrix4x4.CreateScale(-1, 1, 1) : Matrix4x4.Identity;
@@ -480,7 +478,7 @@ namespace Mk2.Viewer.Rendering {
             ExtractFrustum(viewProj);
             visible.Clear();
             foreach (var item in Items)
-                if (item.Kind != ItemKind.EnvDome && Visible(item, settings) && InFrustum(item.WorldMin, item.WorldMax) && WithinDrawDistance(eye, item.WorldMin, item.WorldMax, settings))
+                if (item.Kind != ItemKind.EnvDome && Visible(item, settings) && InFrustum(item.WorldMin, item.WorldMax))
                     visible.Add(item);
             GL.Disable(EnableCap.Blend);
             int opaqueIndex = 0;
@@ -505,7 +503,7 @@ namespace Mk2.Viewer.Rendering {
                     bool shown = collision.Object == null
                         ? settings.GroundVisible(collision.Chunk.Def.Name, collision.Name)
                         : settings.ObjectCollisionVisible(collision.Object);
-                    if (!shown || !InFrustum(collision.WorldMin, collision.WorldMax) || !WithinDrawDistance(eye, collision.WorldMin, collision.WorldMax, settings)) continue;
+                    if (!shown || !InFrustum(collision.WorldMin, collision.WorldMax)) continue;
                     meshShader.Set("uModel", collision.World);
                     collision.Mesh.Draw();
                     LastDrawnTriangles += collision.Triangles;
@@ -572,6 +570,7 @@ namespace Mk2.Viewer.Rendering {
                 selectionLines.Draw();
             }
             CheckGl("Selection lines");
+            GL.ColorMask(true, true, true, true);
             GL.BindVertexArray(0);
         }
 
@@ -633,7 +632,6 @@ namespace Mk2.Viewer.Rendering {
         /// <summary>pass 0 = opaque and alpha-tested parts, 1 = normally blended parts, 2 = added and subtracted parts.</summary>
         private void DrawModel(DrawItem item, Matrix4x4 world, ViewSettings settings, float time, int pass, bool forceNoFog = false) {
             var gpuModel = item.Model;
-            bool prelit = item.Kind != ItemKind.Object && settings.VertexColors;
             bool modelSet = false;
             foreach (var part in gpuModel.Parts) {
                 if (part.IsCollisionComponent && !settings.ModelCollisionComponents) continue;
@@ -649,14 +647,14 @@ namespace Mk2.Viewer.Rendering {
                 bool useTex = settings.Textures && part.Texture != 0;
                 meshShader.Set("uUseTex", useTex);
                 meshShader.Set("uUseVCol", settings.VertexColors);
-                meshShader.Set("uLighting", (settings.Lighting && !prelit) || part.IsCollisionComponent);
+                meshShader.Set("uLighting", part.IsCollisionComponent);
                 float alphaReference = 0f;
                 if (useTex && (material.AlphaTest || part.TextureIsCutout || (part.TextureHasAlpha && !transparent)))
                     alphaReference = material.AlphaRef > 0 ? material.AlphaRef : 0.5f;
                 if (pass == 1) alphaReference = 0.05f;
                 if (pass == 2) alphaReference = 0.01f;
                 meshShader.Set("uAlphaRef", alphaReference);
-                var tint = part.IsCollisionComponent ? new Vector4(0.4f, 1f, 0.4f, 1f) : item.Tint;
+                var tint = part.IsCollisionComponent ? new Vector4(0.4f, 1f, 0.4f, 1f) : settings.VertexColors ? item.Tint : Vector4.One;
                 meshShader.Set("uTint", tint);
                 var uvOffset = material.Scrolls ? new Vector2(Frac(material.ScrollU * time), Frac(material.ScrollV * time)) : Vector2.Zero;
                 meshShader.Set("uUVOffset", uvOffset);

@@ -53,15 +53,16 @@ namespace Mk2.Formats
     ///   0x14 u32 offset of the ANG info block: u32 ANG data offset (0x10), u16 ANG transform count, u16 8 (stride)
     ///   0x20 bones, 0x20 bytes each:
     ///        +0x00 vec3 bind position (model space)  +0x0C runtime pointer
-    ///        +0x10 u32 name offset   +0x14 u16 key count   +0x16 u16 parent (0xFF = root)
+    ///        +0x10 u32 name offset   +0x14 u16 key count   +0x16 u8 parent (0xFF = root)
+    ///        +0x17 u8 transform pool: the bone's ANG indices count from pool × (ANG transform count in the info block)
     ///        +0x18 u32 key offset    +0x1C u16 0           +0x1E u16 key type (<see cref="AnimKeyType"/>)
     /// ANG3: 0x10 header, then 8-byte transforms: s16 x, y, z, w.
     ///   rotation = quaternion (x, y, z, w) ÷ 16384
     ///   position / scale = Decompress_Vector (5-bit exponent per axis packed in w).
     ///
-    /// Pose maths (checked against the game's walk/run cycles): local = S · R · ReadTransform(localOffset + key.Position)
+    /// Pose maths (checked against the game's walk/run cycles): local = S · R · T(localOffset + key.Position)
     /// with row vectors, R = CreateFromQuaternion(conjugate(q)) — the game's matrices are transposed — and
-    /// global = local · parentGlobal. Vertices are stored in bind pose, so skin = ReadTransform(−BindPosition) · global.
+    /// global = local · parentGlobal. Vertices are stored in bind pose, so skin = T(−BindPosition) · global.
     /// </summary>
     public sealed class Animation
     {
@@ -90,18 +91,19 @@ namespace Mk2.Formats
             animation.FrameCount = reader.U16(6);
 
             var guts = ang != null && ang.Length >= 0x10 ? new Bin(ang) : null;
-            int angData = 0x10, angCount = 0;
+            int angData = 0x10, angCount = 0, poolSize = 0;
             int info = reader.S32(0x14);
             if (info > 0 && info + 6 <= anm.Length)
             {
                 angData = reader.S32(info);
                 angCount = reader.U16(info + 4);
+                poolSize = angCount;
             }
             if (guts != null)
             {
                 if (angData <= 0 || angData > ang.Length) angData = 0x10;
                 int fit = (ang.Length - angData) / 8;
-                if (angCount == 0 || angCount > fit) angCount = fit;
+                angCount = fit;
             }
             else animation.Warnings.Add("ANG file missing: positions, scales and indexed rotations fall back to the bind pose");
             animation.TransformCount = angCount;
@@ -137,8 +139,9 @@ namespace Mk2.Formats
                     KeyType = (AnimKeyType)reader.U16(offset + 0x1E),
                 };
                 int keyCount = reader.U16(offset + 0x14);
-                int parent = reader.U16(offset + 0x16);
-                bone.Parent = parent == 0xFF || parent == 0xFFFF || parent >= boneCount ? -1 : parent;
+                int parent = reader.U8(offset + 0x16);
+                bone.Parent = parent == 0xFF || parent >= boneCount ? -1 : parent;
+                int poolStart = reader.U8(offset + 0x17) * poolSize;
                 int keyOff = reader.S32(offset + 0x18);
                 if (string.IsNullOrEmpty(bone.Name)) bone.Name = "bone" + boneIndex;
 
@@ -152,7 +155,7 @@ namespace Mk2.Formats
                     switch (bone.KeyType)
                     {
                         case AnimKeyType.RotationIndexed:
-                            key.Rotation = Rot(reader.U16(keyOffset + 2));
+                            key.Rotation = Rot(poolStart + reader.U16(keyOffset + 2));
                             break;
                         case AnimKeyType.RotationInline:
                         {
@@ -162,9 +165,9 @@ namespace Mk2.Formats
                             break;
                         }
                         default:
-                            key.Position = Vec(reader.U16(keyOffset + 2), Vector3.Zero);
-                            key.Rotation = Rot(reader.U16(keyOffset + 4));
-                            key.Scale = Vec(reader.U16(keyOffset + 6), Vector3.One);
+                            key.Position = Vec(poolStart + reader.U16(keyOffset + 2), Vector3.Zero);
+                            key.Rotation = Rot(poolStart + reader.U16(keyOffset + 4));
+                            key.Scale = Vec(poolStart + reader.U16(keyOffset + 6), Vector3.One);
                             break;
                     }
                     bone.Keys.Add(key);

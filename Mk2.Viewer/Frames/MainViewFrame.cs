@@ -4,6 +4,7 @@ using Hexa.NET.ImGui;
 using Mk2.Viewer.Frames;
 using Mk2.Viewer.Rendering;
 using OpenTK.Graphics.OpenGL4;
+using OpenTK.Windowing.Common;
 using Vec2 = System.Numerics.Vector2;
 using Vec3 = System.Numerics.Vector3;
 
@@ -68,10 +69,10 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
             var io = ImGui.GetIO();
             var mouse = io.MousePos;
 
-            if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Right)) rightDragging = true;
+            if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Right)) { rightDragging = true; LockCursor(viewer, true); }
             if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Middle)) middleDragging = true;
             if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left)) { leftPressed = true; pressedMouse = mouse; }
-            if (ImGui.IsMouseReleased(ImGuiMouseButton.Right)) rightDragging = false;
+            if (rightDragging && ImGui.IsMouseReleased(ImGuiMouseButton.Right)) { rightDragging = false; LockCursor(viewer, false); }
             if (ImGui.IsMouseReleased(ImGuiMouseButton.Middle)) middleDragging = false;
             if (ImGui.IsMouseReleased(ImGuiMouseButton.Left)) {
                 bool wasPressed = leftPressed;
@@ -95,6 +96,10 @@ namespace Mk2.Viewer.ImGuiUi.Frames {
             if (hovered && ImGui.IsKeyPressed(ImGuiKey.F)) viewer.FocusSelection();
             if (hovered && ImGui.IsKeyPressed(ImGuiKey.Escape)) viewer.Select(null, null);
         }
+
+        /// <summary>Hides the cursor and keeps it in place while dragging; it comes back where it was.</summary>
+        public static void LockCursor(Window viewer, bool locked) =>
+            viewer.CursorState = locked ? CursorState.Grabbed : CursorState.Normal;
 
         public static void Fly(Camera camera, float elapsed) {
             var io = ImGui.GetIO();

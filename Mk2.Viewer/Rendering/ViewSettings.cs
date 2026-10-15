@@ -14,14 +14,11 @@ namespace Mk2.Viewer.Rendering
 
         public bool Textures = true;
         public bool VertexColors = true;
-        public bool Lighting = false;
         public bool Transparency = true;
         public bool Fog = true;
         public float Brightness = 1.2f;
 
         public bool CameraInfo = true;
-        public const float UnlimitedDrawDistance = 200000f;
-        public float DrawDistance = UnlimitedDrawDistance;
 
         public bool Wireframe = false;
         public bool CullBackfaces = false;
